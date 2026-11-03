@@ -24,6 +24,8 @@
 // The header's scope picker chooses what is reviewed: the uncommitted
 // changes, the last commit plus them, or everything on the branch since it
 // left its base (the pull-request view); "reviewer.scope" cycles it.
+// Long diff lines wrap to the panel's width (wrap()) instead of scrolling
+// sideways; a hunk header stays one truncated line.
 // Props: { palette: "one-dark-pro" | "theme" | "dark-plus" (default: one-dark-pro),
 //          font_size: px (default: the terminal's font size minus one),
 //          base: the branch reviews are against (default: origin/HEAD, else main, else master) }.
@@ -87,7 +89,7 @@ export default class Changes extends View {
   init(_props, cx) {
     // Opened as the send dialog (ask.js): this copy is the dialog, nothing else.
     if (props()?.dialog) { this.dialog = Object.create(Dialog.prototype); this.dialog.init(_props, cx); return; }
-    this.files = []; this.rows = []; this.index = new Map(); this.items = []; this.sizes = []; this.diffWidth = 0; this.gutter = 30; this.message = "";
+    this.files = []; this.rows = []; this.index = new Map(); this.items = []; this.sizes = []; this.gutter = 30; this.message = "";
     this.comments = []; this.composer = null; this.handle = cx.focus_handle(); this.scroll = VirtualListScrollHandle.new();
     this.fontSize = codeSize(); this.row = rowOf(this.fontSize);
     this.scope = "work"; this.scopeInfo = null; this.choosingScope = false; this.ref = "HEAD";
@@ -323,12 +325,38 @@ export default class Changes extends View {
   }
 
   // Sizes that depend on the font: the gutter (wide enough for the largest
-  // line number), the diff's width, and the rows.
+  // line number) and the rows.
   measure() {
     const ch = charOf(this.fontSize), digits = String(Math.max(0, ...this.rows.map((r) => r.number ?? 0))).length;
     this.gutter = Math.max(30, Math.ceil(digits * ch + 10));
-    this.diffWidth = Math.max(300, ...(this.lines ?? []).map((line) => Math.ceil(line.length * ch) + this.gutter + 36));
     this.rebuild();
+  }
+
+  // Characters per diff line: the panel's width less the gutter, the sign
+  // column, the borders and room for the scrollbar.
+  cols() { return Math.max(20, Math.floor(((this.size?.width ?? 368) - this.gutter - 32) / charOf(this.fontSize))); }
+
+  // A row's spans cut into lines that fit the panel. A line breaks after its
+  // last space, or mid-word when it has none in its second half, as an
+  // editor's word wrap does. The code font is monospaced, so characters measure it.
+  wrap(spans) {
+    const cols = this.cols(), text = spans.map((s) => s.text).join(""), cuts = [];
+    for (let at = 0; text.length - at > cols;) {
+      const space = text.lastIndexOf(" ", at + cols - 1);
+      at = space > at + cols / 2 ? space + 1 : at + cols;
+      cuts.push(at);
+    }
+    const lines = [[]];
+    let pos = 0, next = cuts.shift();
+    for (const s of spans) {
+      for (let i = 0; i < s.text.length;) {
+        if (pos === next) { lines.push([]); next = cuts.shift(); }
+        const end = Math.min(s.text.length, i + ((next ?? Infinity) - pos));
+        lines.at(-1).push({ text: s.text.slice(i, end), cls: s.cls });
+        pos += end - i; i = end;
+      }
+    }
+    return lines;
   }
 
   // Where a row descriptor is in the current diff, or -1.
@@ -338,7 +366,11 @@ export default class Changes extends View {
   // comments on the whole file come first. The comment being edited stays
   // in place as a live preview of what is typed in the box.
   rebuild() {
-    const items = this.rows.map((_r, i) => ({ key: `r:${i}`, kind: "row", i, height: this.row }));
+    // A hunk header stays one truncated line; other rows wrap to the panel's width.
+    const items = this.rows.map((r, i) => {
+      const lines = r.kind === "@" ? null : this.wrap(r.spans);
+      return { key: `r:${i}`, kind: "row", i, lines, height: this.row * (lines?.length ?? 1) };
+    });
     const under = new Map(), editing = this.composer?.editing ?? null;
     this.items = [];
     for (const c of this.comments) {
@@ -589,12 +621,15 @@ export default class Changes extends View {
     // Added and removed rows get a clear tint (stronger when targeted), a
     // colored sign column and a tinted gutter, like a GitHub diff.
     const tint = kind === "+" ? colors.added : kind === "-" ? colors.removed : null;
-    return h_flex().w_full().h(this.row).flex_none().cursor_pointer().border_l(2).border_color(on ? t.accent : mark ? t.accent + "66" : NONE)
+    // A wrapped row keeps its number and sign on its first line.
+    return h_flex().w_full().h(it.height).flex_none().items_start().cursor_pointer().border_l(2).border_color(on ? t.accent : mark ? t.accent + "66" : NONE)
       .when(Boolean(tint), (e) => e.bg(tint + (on ? "5c" : "30")))
       .when(!tint && on, (e) => e.bg(t.selected))
-      .child(div().w(this.gutter).flex_none().text_right().pr(4).when(Boolean(tint), (e) => e.bg(tint + "26")).text_color(on ? t.foreground : tint ? t.foreground + "cc" : t.dim).child(number === undefined ? "" : String(number)))
-      .child(div().w(16).flex_none().text_center().font_bold().text_color(tint ?? NONE).child(kind === "+" ? "+" : kind === "-" ? "−" : " "))
-      .child(h_flex().flex_1().min_w(0).whitespace_nowrap().children(spans.map((s) => s.cls ? div().text_color(colors[s.cls] ?? t.foreground).child(s.text) : div().child(s.text))));
+      .child(div().w(this.gutter).h_full().flex_none().when(Boolean(tint), (e) => e.bg(tint + "26"))
+        .child(h_flex().h(this.row).justify_end().pr(4).text_color(on ? t.foreground : tint ? t.foreground + "cc" : t.dim).child(number === undefined ? "" : String(number))))
+      .child(h_flex().w(16).h(this.row).flex_none().justify_center().font_bold().text_color(tint ?? NONE).child(kind === "+" ? "+" : kind === "-" ? "−" : " "))
+      .child(v_flex().flex_1().min_w(0).children(it.lines.map((line) => h_flex().h(this.row).whitespace_nowrap()
+        .children(line.map((s) => s.cls ? div().text_color(colors[s.cls] ?? t.foreground).child(s.text) : div().child(s.text))))));
   }
 
   render(cx) {
@@ -648,8 +683,8 @@ export default class Changes extends View {
       .when(this.limited, el => el.child(div().px(12).py(4).text_size(11).text_color(t.dim).child("Showing the first 1,000 changed files")))
       .child(h_flex().flex_1().min_h(0).items_stretch()
         .child(div().flex_1().min_w(0).min_h(0).relative().font_family(codeFont()).text_size(this.fontSize)
-        .child(div().id("changes-diff-x").size_full().overflow_x_scrollbar()
-          .child(div().w_full().min_w(this.diffWidth).h_full().child(v_virtual_list("changes-diff", this.items.length, this.sizes.length ? this.sizes : this.row, (i) => this.items[i].key,
+        .child(div().id("changes-diff-x").size_full()
+          .child(div().w_full().h_full().child(v_virtual_list("changes-diff", this.items.length, this.sizes.length ? this.sizes : this.row, (i) => this.items[i].key,
             (range) => this.items.slice(range.start, range.end).map((it) => this.item(it, t, colors, target, commented))).size_full().track_scroll(this.scroll)
             .on_item_click((k, cx) => { if (k.startsWith("c:")) { if (k.slice(2) !== this.composer?.editing) this.editComment(k.slice(2), cx); } else this.clickRow(Number(k.slice(2)), cx); })
             .on_item_secondary_click((k, _e, cx) => { if (!k.startsWith("r:")) return; const i = Number(k.slice(2)); const r = this.rows[i]; if (!r || r.kind === "") return; this.askAbout(r.kind === "@" ? this.rows.map((_r, j) => j).filter((j) => this.rows[j].hunk === i && this.rows[j].kind !== "") : [i], cx); }))))

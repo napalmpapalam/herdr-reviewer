@@ -46,7 +46,9 @@ fill, `foreground` text at 13px. Top to bottom:
 - **Diff**, in the terminal's font (`font` in settings, JetBrains Mono
   when unset) one size under the terminal's (`font_size` minus one, 13px
   when unset; `props.font_size` overrides), rows 1.8× the size (23px at
-  13px), scrolling both ways:
+  13px), scrolling down. A long line wraps to the panel's width, after its
+  last space (mid-word when it has none in its second half), and keeps its
+  number and sign on its first line; a hunk header stays one truncated line:
   - Hunk headers (`@@ -1,13 +1,16 @@`) on the `raised` background in `dim`.
   - A right-aligned line-number column in `dim`, sized to the largest line
     number (new-file numbers for added and context lines, old-file numbers
