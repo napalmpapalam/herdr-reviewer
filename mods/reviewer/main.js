@@ -26,7 +26,9 @@
 // left its base (the pull-request view); "reviewer.scope" cycles it.
 // Long diff lines wrap to the panel's width (wrap()) instead of scrolling
 // sideways; a hunk header stays one truncated line.
-// A reviewer opens on the file picked last in its repo ("reviewer.last").
+// Once a review or a question is sent, a reviewer opened as an overlay
+// closes itself. It opens again on the file picked last in that repo
+// ("reviewer.last").
 // The file list is a folder tree (treeRows()) with Material Icon Theme
 // icons (icons.js). A view at least SIDE_LIST wide, such as the dialog,
 // shows it as a LIST_WIDTH column right of the diff (side()).
@@ -35,7 +37,7 @@
 //          base: the branch reviews are against (default: origin/HEAD, else main, else master) }.
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, Scrollbar, v_virtual_list, VirtualListScrollHandle, Popover } from "gpui-base";
-import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, nextCommand, props, shared, setShared } from "herdr";
+import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, nextCommand, props, shared, setShared, closeOverlay } from "herdr";
 import { tokenize, languageOf } from "./highlight.js";
 import { ask } from "./ask.js";
 import { palette } from "./palette.js";
@@ -332,6 +334,30 @@ export default class Changes extends View {
   remember(name, value) {
     const all = { ...(shared(name) ?? {}) }; all[repoKey(this.on, this.root)] = value; setShared(name, all);
   }
+  // Closes this copy when it is an overlay (mod.open); a panel stays. A reviewer
+  // block in a layout overlay gets `props().overlay` too, and closes that layout.
+  closeSelf() {
+    const overlay = props()?.overlay;
+    if (overlay) closeOverlay(overlay);
+  }
+  // Sends through the send dialog (ask.js). The dialog sets shared SENT to this send's id once
+  // it went out; render then drops `drafts` (the draft key it carries, or null) and closes.
+  send(title, context, drafts, cx) {
+    const id = `${Date.now()}:${Math.random().toString(36).slice(2)}`;
+    this.outgoing = { id, drafts };
+    cx.spawn(async (cx) => {
+      try { if (await ask({ title, context, sent: SENT, id }) === "none") this.outgoing = null; }
+      catch (e) { this.note_ = `Send failed: ${e}`; this.outgoing = null; }
+      cx.notify();
+    });
+  }
+  // A send went out: its drafts go, by the key they were saved under (the view may show
+  // another repo by now), and an overlay closes.
+  sent(drafts, cx) {
+    if (drafts === this.draftKey()) this.setComments([], cx);
+    else if (drafts) { const all = { ...(shared(DRAFTS) ?? {}) }; delete all[drafts]; setShared(DRAFTS, all); }
+    this.closeSelf();
+  }
   setScope(scope, cx) {
     if (!this.root || scope === this.scope) { this.choosingScope = false; cx.notify(); return; }
     this.remember(SCOPE, scope);
@@ -555,7 +581,7 @@ export default class Changes extends View {
     const rows = (indexes ? indexes.sort((a, b) => a - b).map((i) => this.rows[i]) : this.rows).filter(Boolean).slice(0, 400);
     const span = this.span(rows), title = `${this.open}${span ? `:${span.replace(/^(removed )?lines? /, "")}` : ""}`;
     const head = indexes ? `In ${this.where(this.open)}, ${span || "these lines"} of the diff (${this.scopeWords()}; new-file line numbers; - lines are removed):` : `The diff of ${this.where(this.open)} (${this.scopeWords()}):`;
-    cx.spawn(async (cx) => { try { await ask({ title, context: `${head}\n${this.quote(rows)}` }); } catch (e) { this.note_ = `Ask failed: ${e}`; } cx.notify(); });
+    this.send(title, `${head}\n${this.quote(rows)}`, null, cx);
   }
 
   // Every comment, with its lines, as one review message.
@@ -576,12 +602,7 @@ export default class Changes extends View {
     });
     const n = list.length, title = `Review · ${n} comment${n > 1 ? "s" : ""}`;
     const context = `Code review of ${this.root}${this.on ? ` (on ${this.on})` : ""}: ${this.scopeWords()}. ${n} comment${n > 1 ? "s" : ""}. Line numbers are new-file numbers; "-" lines are removed.\n\n${parts.join("\n\n")}`;
-    this.submitting = Date.now();
-    cx.spawn(async (cx) => {
-      try { const r = await ask({ title, context, sent: SENT }); if (r === "sent") this.setComments([], cx); else if (r === "none") this.submitting = null; }
-      catch (e) { this.note_ = `Submit failed: ${e}`; this.submitting = null; }
-      cx.notify();
-    });
+    this.send(title, context, this.draftKey(), cx);
   }
 
   commit(cx) {
@@ -741,9 +762,7 @@ export default class Changes extends View {
     else if (key() !== this.context || (request?.id !== this.tried && this.requestedFile(request) !== null)) this.refresh(cx);
     const size = codeSize();
     if (size !== this.fontSize) { this.fontSize = size; this.row = rowOf(size); this.measure(); }
-    // The dialog reports a sent review through a shared key; the draft goes.
-    const sentAt = shared(SENT);
-    if (this.submitting && typeof sentAt === "number" && sentAt >= this.submitting) { this.submitting = null; cx.timer.after(1, (cx) => this.setComments([], cx)); }
+    if (this.outgoing && shared(SENT) === this.outgoing.id) { const { drafts } = this.outgoing; this.outgoing = null; cx.timer.after(1, (cx) => this.sent(drafts, cx)); }
     const t = theme(), colors = palette(props()?.palette, t), add = this.files.reduce((n, f) => n + f.add, 0), del = this.files.reduce((n, f) => n + f.del, 0);
     const enabled = Boolean(this.message.trim() && this.root && !this.busy && !this.loading);
     const target = this.target(), n = this.comments.length, canAsk = Boolean(this.open && this.rows.length), side = this.side();

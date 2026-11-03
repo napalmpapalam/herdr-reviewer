@@ -195,12 +195,15 @@ fill, `foreground` text at 13px. Top to bottom:
   and `Comment: <text>`; a whole-file comment comes first for its file
   under `### path, whole file (added, binary)` (status and counts, no
   lines). Send in the dialog (or the direct fallback) sends
-  it; the dialog then sets shared `reviewer.sent`, and the panel
-  clears the drafts. Cancelling the dialog keeps them. **Discard** drops
+  it; the dialog then sets shared `reviewer.sent` to the send's id, and
+  the panel drops the drafts saved under the draft key the send carries.
+  A reviewer opened as an overlay (`props().overlay`, from `mod.open`)
+  then closes itself. Cancelling the dialog keeps the drafts. **Discard** drops
   them without sending.
 - **Ask about diff** (no drafts) sends the whole open diff the same way,
   titled `path:1-16`. **Right-click a row** asks about that one line at
-  once; a hunk header asks about the hunk.
+  once; a hunk header asks about the hunk. A sent question closes an
+  overlay reviewer too.
 - **The send dialog** (`dialog.js`) is this mod opened as an overlay of
   itself (680×560 with context, 560×250 without), the window dimmed
   behind it: a title "Ask the agent" with the caller's title in `dim` and
@@ -275,25 +278,27 @@ fill, `foreground` text at 13px. Top to bottom:
   `{ path, from, to, editing }` with the same descriptors; `target()`
   resolves it against the open diff. `clickRow`, `editComment`,
   `addComment`, `deleteComment`, `closeComposer`, `setComments` (persists
-  to shared `reviewer.drafts` under `${machine}:${root}`), `submit`
-  (builds the message, calls `ask` with `sent: "reviewer.sent"`,
-  clears on "sent", or when `render` sees the shared key move past the
-  submit time).
+  to shared `reviewer.drafts` under `${machine}:${root}:${scope}`),
+  `submit` (builds the message and calls `send`), `send(title, context,
+  drafts)` (a unique id, then `ask` with `sent: "reviewer.sent"` and that
+  id; `render` sees the shared key equal the id and calls `sent`), `sent`
+  (drops those drafts by their key, then `closeSelf`).
 - `v_virtual_list("changes-diff", items.length, sizes, key, render)` with
   `on_item_click` (keys `r:<row>` and `c:<comment id>`) and
   `on_item_secondary_click` (quick ask). A `TextareaState` for the
   comment, created in `init`, with `submit` → `addComment`.
-- `ask.js`: `pickAgent()`, `ask({ title, context, sent })` → opens this
-  mod as a dialog overlay with props `{ dialog: true, title, context,
-  sent }`, or sends with `hc send` and sets the `sent` key itself;
+- `ask.js`: `pickAgent()`, `ask({ title, context, sent, id })` → opens
+  this mod as a dialog overlay with props `{ dialog: true, title,
+  context, sent, id }`, or sends with `hc send` and sets the `sent` key
+  to `id` itself;
   resolves "dialog", "sent" or "none". `dialog.js` exports `Dialog`
   (`init`, `render`, `send`, `start`, `close`); `main.js` hands a copy
   over to it when `props().dialog` is set, so the dialog copy never runs
   git.
 - `herdr` calls: `spaces`, `panes`, `focused`, `exec`, `readTextFile`,
   `watchFolder`, `theme`, `settings`, `nextCommand`, `props`, `shared`,
-  `setShared`, `agents`, `hc`, `notify`, `openOverlay`, `appHome`.
-  gpui-kit: `div`, `svg`, `image`.
+  `setShared`, `agents`, `hc`, `notify`, `openOverlay`, `closeOverlay`,
+  `appHome`. gpui-kit: `div`, `svg`, `image`.
   Programs run: `git`, `hc`.
 - Art: `changes.svg` from the clone (unused by the panel itself).
 - `icons.js`: `iconFile(path, dir, open, dark)` → the icon's path for
@@ -381,4 +386,6 @@ fill, `foreground` text at 13px. Top to bottom:
 - The file tree shows a Material folder icon on each folder row (open
   while expanded) and a file icon on each file row: TypeScript on `.ts`,
   a test icon on `.test.ts`, Node.js on `package.json`.
-- Opened again, the reviewer shows the file picked last, not the first.
+- Opened with `mod.open:reviewer`, after Send in the dialog the reviewer
+  closes; opened again, it shows the file picked last, not the first.
+  As a panel in a layout it stays open.
