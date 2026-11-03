@@ -151,8 +151,10 @@ fill, `foreground` text at 13px. Top to bottom:
   scopes' drafts stay saved, and Submit and Discard act on the shown
   scope's set only. `reviewer.scope` cycles the scopes the repo
   offers.
-- The first changed file's diff opens by itself; clicking a file opens it,
-  clicking it again closes it. Untracked files show as one `+` hunk of the
+- The file picked last in this repo (shared `reviewer.last`, a map keyed
+  `${machine}:${root}`) opens by itself, else the first changed file;
+  clicking a file opens it and remembers it, clicking it again closes it.
+  Untracked files show as one `+` hunk of the
   whole file.
 - **Click a diff row** to open the comment box on that line. With the box
   open and empty, **click a row outside the highlight** to widen the
@@ -379,3 +381,4 @@ fill, `foreground` text at 13px. Top to bottom:
 - The file tree shows a Material folder icon on each folder row (open
   while expanded) and a file icon on each file row: TypeScript on `.ts`,
   a test icon on `.test.ts`, Node.js on `package.json`.
+- Opened again, the reviewer shows the file picked last, not the first.

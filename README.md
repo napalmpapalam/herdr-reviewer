@@ -73,6 +73,7 @@ Everything the shipped panel did (file list, diff, commit box) stays.
 4. Or open it as a dialog over the window, 90% of its width and height:
    bind a key to `mod.open:reviewer` in `keys.json` (for example
    `"cmd-r": "mod.open:reviewer"`); the key closes it again, and so does Esc.
+   It opens on the file you picked last in that repo.
 
 Or ask the agent in your Herdr window to add
 `herdr.dev/mods/vytasgavelis/reviewer`; the steps are in Herdr's

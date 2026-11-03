@@ -26,6 +26,7 @@
 // left its base (the pull-request view); "reviewer.scope" cycles it.
 // Long diff lines wrap to the panel's width (wrap()) instead of scrolling
 // sideways; a hunk header stays one truncated line.
+// A reviewer opens on the file picked last in its repo ("reviewer.last").
 // The file list is a folder tree (treeRows()) with Material Icon Theme
 // icons (icons.js). A view at least SIDE_LIST wide, such as the dialog,
 // shows it as a LIST_WIDTH column right of the diff (side()).
@@ -49,7 +50,10 @@ function location() {
 }
 const key = () => JSON.stringify(location());
 const countLines = (text) => text ? text.split("\n").length - Number(text.endsWith("\n")) : 0;
-const NONE = "#00000000", SENT = "reviewer.sent", DRAFTS = "reviewer.drafts", SCOPE = "reviewer.scope";
+const NONE = "#00000000", SENT = "reviewer.sent", DRAFTS = "reviewer.drafts", SCOPE = "reviewer.scope", LAST = "reviewer.last";
+// A repo's key in the per-repo shared maps (SCOPE, LAST, and DRAFTS with the scope added).
+const repoKey = (on, root) => `${on ?? ""}:${root}`;
+const recall = (name, repo) => (shared(name) ?? {})[repo];
 // The review scopes, in picker order. `ref` is what the working tree is diffed against.
 const SCOPES = ["work", "last", "branch"];
 const OPEN = "reviewer.open", OPEN_TTL = 30_000;
@@ -195,7 +199,7 @@ export default class Changes extends View {
         const hasHead = head.code === 0;
         // The scopes this repo offers, and the one in use (remembered per repo).
         const info = hasHead ? await this.scopes(git) : { branch: null, base: null, last: null, merge: null };
-        const scopeKey = `${on ?? ""}:${root}`, remembered = (shared(SCOPE) ?? {})[scopeKey];
+        const repo = repoKey(on, root), remembered = recall(SCOPE, repo);
         let scope = root === this.root ? this.scope : (remembered ?? (info.merge ? "branch" : "work"));
         if (scope === "branch" && !info.merge) scope = "work";
         if (scope === "last" && !info.last) scope = "work";
@@ -245,15 +249,19 @@ export default class Changes extends View {
         const requested = this.requestedFile(request);
         if (requested !== null) {
           this.open = files.some(f => f.path === requested) ? requested : null;
-          if (this.open) this.reveal(this.open);
+          if (this.open) { this.reveal(this.open); this.remember(LAST, this.open); }
           this.closed = !this.open; this.composer = null; this.note_ = this.open ? null : "Requested file has no diff in this scope (or is outside the first 1,000 files).";
           this.setLines([]);
           if (this.open) this.scroll.scroll_to_item(0);
           if (shared(OPEN)?.id === request.id) setShared(OPEN, null);
         }
         if (this.open && !files.some((f) => f.path === this.open)) { this.open = null; this.setLines([]); }
-        // The first file's diff shows until you pick another.
-        if (!this.open && !this.closed && files.length) this.open = files[0].path;
+        // The file picked last in this repo, else the first file, shows until you pick another.
+        if (!this.open && !this.closed && files.length) {
+          const last = recall(LAST, repo);
+          this.open = files.some((f) => f.path === last) ? last : files[0].path;
+          if (this.open === last) this.reveal(last);
+        }
         if (this.open) {
           try { await this.load(this.open, context); }
           catch { if (key() === context) this.setLines(["Cannot preview this diff (too large or unreadable)"]); }
@@ -279,9 +287,9 @@ export default class Changes extends View {
 
   // The draft comments of one scope of the shown repo. Drafts saved before
   // scopes existed (keyed by repo alone) were all on the uncommitted changes.
-  draftKey(scope = this.scope) { return `${this.on ?? ""}:${this.root}:${scope}`; }
+  draftKey(scope = this.scope) { return `${repoKey(this.on, this.root)}:${scope}`; }
   loadDrafts(scope) {
-    const drafts = { ...(shared(DRAFTS) ?? {}) }, old = `${this.on ?? ""}:${this.root}`;
+    const drafts = { ...(shared(DRAFTS) ?? {}) }, old = repoKey(this.on, this.root);
     if (drafts[old]) { drafts[`${old}:work`] = [...(drafts[`${old}:work`] ?? []), ...drafts[old]]; delete drafts[old]; setShared(DRAFTS, drafts); }
     return drafts[this.draftKey(scope)] ?? [];
   }
@@ -320,9 +328,13 @@ export default class Changes extends View {
       : this.scope === "last" ? `the last commit (${i.last}${i.subject ? `, "${i.subject}"` : ""}) plus the uncommitted changes`
       : "uncommitted changes";
   }
+  // Stores this repo's entry in a per-repo shared map.
+  remember(name, value) {
+    const all = { ...(shared(name) ?? {}) }; all[repoKey(this.on, this.root)] = value; setShared(name, all);
+  }
   setScope(scope, cx) {
     if (!this.root || scope === this.scope) { this.choosingScope = false; cx.notify(); return; }
-    const all = { ...(shared(SCOPE) ?? {}) }; all[`${this.on ?? ""}:${this.root}`] = scope; setShared(SCOPE, all);
+    this.remember(SCOPE, scope);
     this.scope = scope; this.choosingScope = false; this.composer = null; this.setLines([]);
     this.comments = this.loadDrafts(scope); this.rebuild();
     this.refresh(cx); cx.notify();
@@ -781,6 +793,7 @@ export default class Changes extends View {
   pick(path, cx) {
     this.open = this.open === path ? null : path; this.setLines([]); this.note_ = null;
     this.closed = !this.open;
+    if (this.open) this.remember(LAST, this.open);
     const context = this.context;
     if (this.open) cx.spawn(async (cx) => {
       try { await this.load(path, context); }
