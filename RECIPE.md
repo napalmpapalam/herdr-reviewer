@@ -7,7 +7,7 @@ their lines across any number of files, and "Submit review" sends them all,
 each with the lines it is about, to the agent running in the space as one
 message. It replaces `changes` in a layout; everything the shipped panel did
 (file list, diff, commit box) stays. `mod.open:reviewer` opens it as a
-dialog over the window instead, 90% of its width and height (`overlay` in
+dialog over the window instead, 75% of its width and 90% of its height (`overlay` in
 `mod.json`).
 
 ![reviewer](preview.png)

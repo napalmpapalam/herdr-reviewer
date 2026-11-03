@@ -8,7 +8,7 @@
   "title": "Changes",
   "overlay": {
     "kind": "dialog",
-    "width": 0.9,
+    "width": 0.75,
     "height": 0.9
   }
 }
