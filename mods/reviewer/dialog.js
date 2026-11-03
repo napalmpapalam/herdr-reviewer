@@ -1,10 +1,10 @@
 // The send dialog of reviewer, opened as an overlay of the same mod:
-//   openOverlay({ mod: "reviewer", kind: "dialog", width, height, props: { dialog: true, title, context, sent } })
+//   openOverlay({ mod: "reviewer", kind: "dialog", width, height, props: { dialog: true, title, context, sent, id } })
 // (main.js hands the copy over to this class when props().dialog is set).
 // `context` is text the caller already formatted (a file, lines, a hunk);
 // `title` is the short label at the top; `sent` (optional) is a shared key
-// the dialog sets to the send time once the text went out, so the caller
-// can react (the panel clears its comments).
+// the dialog sets to `id` once the text went out, so the caller can react
+// (it drops the sent drafts and, as an overlay, closes).
 // The note and the context go to the agent as one message with `hc send`.
 // It goes to the focused agent of the space (else an idle one, else the
 // first); a dropdown picks another. The context is read-only: it scrolls
@@ -19,7 +19,7 @@ const DOT = { working: "working", blocked: "blocked", done: "done", idle: "idle"
 export class Dialog {
   init(_props, cx) {
     const p = props() ?? {};
-    this.context = String(p.context ?? ""); this.title = p.title ?? "";
+    this.context = String(p.context ?? ""); this.title = p.title ?? ""; this.sent = p.sent ? { name: p.sent, id: p.id } : null;
     this.note = ""; this.pick = null; this.error = null; this.sending = false; this.confirm = false; this.choosing = false; this.copied = false;
     this.input = TextareaState.new({ placeholder: this.context ? "Your note to the agent (optional)…" : "What do you want to ask?", rows: this.context ? 2 : 3 });
     this.input.set_auto_grow(this.context ? 2 : 3, this.context ? 4 : 6);
@@ -65,12 +65,15 @@ export class Dialog {
       this.sending = false;
       if (r.code === 0) {
         this.close(); notify({ title: `Sent to ${name}`, body: this.title || this.note.trim().slice(0, 80), level: "success" });
-        if (props()?.sent) setShared(props().sent, Date.now());
+        this.report();
         run("pane.focus", { terminal: agent.address });
       }
       else { this.error = (r.stderr || r.stdout).trim().slice(0, 300) || "hc send failed"; this.confirm = false; cx.notify(); }
     });
   }
+
+  // Tells the caller the text went out.
+  report() { if (this.sent) setShared(this.sent.name, this.sent.id); }
 
   // No agent here: start Claude in a new tab with the text as its first message.
   start(cx) {
@@ -78,7 +81,7 @@ export class Dialog {
     if (!f?.space) { this.error = "No space is shown"; cx.notify(); return; }
     this.close();
     run("tab.new", { space: f.space, argv: ["claude"], task: text });
-    if (props()?.sent) setShared(props().sent, Date.now());
+    this.report();
     notify({ title: "Started Claude with your question", level: "success" });
   }
 

@@ -26,18 +26,23 @@
 // left its base (the pull-request view); "reviewer.scope" cycles it.
 // Long diff lines wrap to the panel's width (wrap()) instead of scrolling
 // sideways; a hunk header stays one truncated line.
-// The file list is a folder tree (treeRows()). A view at least SIDE_LIST wide,
-// such as the dialog, shows it as a LIST_WIDTH column right of the diff (side()).
+// Once a review or a question is sent, a reviewer opened as an overlay
+// closes itself. It opens again on the file picked last in that repo
+// ("reviewer.last").
+// The file list is a folder tree (treeRows()) with Material Icon Theme
+// icons (icons.js). A view at least SIDE_LIST wide, such as the dialog,
+// shows it as a LIST_WIDTH column right of the diff (side()).
 // Props: { palette: "one-dark-pro" | "theme" | "dark-plus" (default: dark-plus),
 //          font_size: px (default: the terminal's font size minus one),
 //          base: the branch reviews are against (default: origin/HEAD, else main, else master) }.
-import { View, div, svg } from "gpui-kit";
+import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, Scrollbar, v_virtual_list, VirtualListScrollHandle, Popover } from "gpui-base";
-import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, nextCommand, props, shared, setShared } from "herdr";
+import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, nextCommand, props, shared, setShared, closeOverlay } from "herdr";
 import { tokenize, languageOf } from "./highlight.js";
 import { ask } from "./ask.js";
 import { palette } from "./palette.js";
 import { Dialog } from "./dialog.js";
+import { iconFile } from "./icons.js";
 
 function location() {
   const space = spaces().find((s) => s.active), f = focused();
@@ -47,7 +52,10 @@ function location() {
 }
 const key = () => JSON.stringify(location());
 const countLines = (text) => text ? text.split("\n").length - Number(text.endsWith("\n")) : 0;
-const NONE = "#00000000", SENT = "reviewer.sent", DRAFTS = "reviewer.drafts", SCOPE = "reviewer.scope";
+const NONE = "#00000000", SENT = "reviewer.sent", DRAFTS = "reviewer.drafts", SCOPE = "reviewer.scope", LAST = "reviewer.last";
+// A repo's key in the per-repo shared maps (SCOPE, LAST, and DRAFTS with the scope added).
+const repoKey = (on, root) => `${on ?? ""}:${root}`;
+const recall = (name, repo) => (shared(name) ?? {})[repo];
 // The review scopes, in picker order. `ref` is what the working tree is diffed against.
 const SCOPES = ["work", "last", "branch"];
 const OPEN = "reviewer.open", OPEN_TTL = 30_000;
@@ -67,10 +75,10 @@ const charOf = (size) => size * 0.62;
 const LIST_WIDTH = 300, SIDE_LIST = 1000;
 
 // A row's identity across reloads: its kind, number and text.
-// The changed files as folder-tree rows: { dir, name, depth, open } and { file, depth }. A folder
+// The changed files as folder-tree rows: { dir, name, depth, open, icon } and { file, depth, icon }. A folder
 // that holds one folder and no files shares its row with it ("k8s/kind"), as VS Code's compact
 // folders do. Folders come before files; a collapsed folder's rows are left out.
-function treeRows(files, collapsed) {
+function treeRows(files, collapsed, dark) {
   const root = { dirs: new Map(), files: [] };
   for (const f of files) {
     let node = root, path = "";
@@ -87,10 +95,10 @@ function treeRows(files, collapsed) {
       let name = dir.name;
       while (!dir.files.length && dir.dirs.size === 1) { dir = dir.dirs.values().next().value; name += "/" + dir.name; }
       const open = !collapsed.has(dir.path);
-      rows.push({ dir: dir.path, name, depth, open });
+      rows.push({ dir: dir.path, name, depth, open, icon: iconFile(dir.path, true, open, dark) });
       if (open) walk(dir, depth + 1);
     }
-    for (const f of node.files.sort((a, b) => a.path.localeCompare(b.path))) rows.push({ file: f, depth });
+    for (const f of node.files.sort((a, b) => a.path.localeCompare(b.path))) rows.push({ file: f, depth, icon: iconFile(f.path, false, false, dark) });
   };
   walk(root, 0);
   return rows;
@@ -193,7 +201,7 @@ export default class Changes extends View {
         const hasHead = head.code === 0;
         // The scopes this repo offers, and the one in use (remembered per repo).
         const info = hasHead ? await this.scopes(git) : { branch: null, base: null, last: null, merge: null };
-        const scopeKey = `${on ?? ""}:${root}`, remembered = (shared(SCOPE) ?? {})[scopeKey];
+        const repo = repoKey(on, root), remembered = recall(SCOPE, repo);
         let scope = root === this.root ? this.scope : (remembered ?? (info.merge ? "branch" : "work"));
         if (scope === "branch" && !info.merge) scope = "work";
         if (scope === "last" && !info.last) scope = "work";
@@ -243,15 +251,19 @@ export default class Changes extends View {
         const requested = this.requestedFile(request);
         if (requested !== null) {
           this.open = files.some(f => f.path === requested) ? requested : null;
-          if (this.open) this.reveal(this.open);
+          if (this.open) { this.reveal(this.open); this.remember(LAST, this.open); }
           this.closed = !this.open; this.composer = null; this.note_ = this.open ? null : "Requested file has no diff in this scope (or is outside the first 1,000 files).";
           this.setLines([]);
           if (this.open) this.scroll.scroll_to_item(0);
           if (shared(OPEN)?.id === request.id) setShared(OPEN, null);
         }
         if (this.open && !files.some((f) => f.path === this.open)) { this.open = null; this.setLines([]); }
-        // The first file's diff shows until you pick another.
-        if (!this.open && !this.closed && files.length) this.open = files[0].path;
+        // The file picked last in this repo, else the first file, shows until you pick another.
+        if (!this.open && !this.closed && files.length) {
+          const last = recall(LAST, repo);
+          this.open = files.some((f) => f.path === last) ? last : files[0].path;
+          if (this.open === last) this.reveal(last);
+        }
         if (this.open) {
           try { await this.load(this.open, context); }
           catch { if (key() === context) this.setLines(["Cannot preview this diff (too large or unreadable)"]); }
@@ -277,9 +289,9 @@ export default class Changes extends View {
 
   // The draft comments of one scope of the shown repo. Drafts saved before
   // scopes existed (keyed by repo alone) were all on the uncommitted changes.
-  draftKey(scope = this.scope) { return `${this.on ?? ""}:${this.root}:${scope}`; }
+  draftKey(scope = this.scope) { return `${repoKey(this.on, this.root)}:${scope}`; }
   loadDrafts(scope) {
-    const drafts = { ...(shared(DRAFTS) ?? {}) }, old = `${this.on ?? ""}:${this.root}`;
+    const drafts = { ...(shared(DRAFTS) ?? {}) }, old = repoKey(this.on, this.root);
     if (drafts[old]) { drafts[`${old}:work`] = [...(drafts[`${old}:work`] ?? []), ...drafts[old]]; delete drafts[old]; setShared(DRAFTS, drafts); }
     return drafts[this.draftKey(scope)] ?? [];
   }
@@ -318,9 +330,37 @@ export default class Changes extends View {
       : this.scope === "last" ? `the last commit (${i.last}${i.subject ? `, "${i.subject}"` : ""}) plus the uncommitted changes`
       : "uncommitted changes";
   }
+  // Stores this repo's entry in a per-repo shared map.
+  remember(name, value) {
+    const all = { ...(shared(name) ?? {}) }; all[repoKey(this.on, this.root)] = value; setShared(name, all);
+  }
+  // Closes this copy when it is an overlay (mod.open); a panel stays. A reviewer
+  // block in a layout overlay gets `props().overlay` too, and closes that layout.
+  closeSelf() {
+    const overlay = props()?.overlay;
+    if (overlay) closeOverlay(overlay);
+  }
+  // Sends through the send dialog (ask.js). The dialog sets shared SENT to this send's id once
+  // it went out; render then drops `drafts` (the draft key it carries, or null) and closes.
+  send(title, context, drafts, cx) {
+    const id = `${Date.now()}:${Math.random().toString(36).slice(2)}`;
+    this.outgoing = { id, drafts };
+    cx.spawn(async (cx) => {
+      try { if (await ask({ title, context, sent: SENT, id }) === "none") this.outgoing = null; }
+      catch (e) { this.note_ = `Send failed: ${e}`; this.outgoing = null; }
+      cx.notify();
+    });
+  }
+  // A send went out: its drafts go, by the key they were saved under (the view may show
+  // another repo by now), and an overlay closes.
+  sent(drafts, cx) {
+    if (drafts === this.draftKey()) this.setComments([], cx);
+    else if (drafts) { const all = { ...(shared(DRAFTS) ?? {}) }; delete all[drafts]; setShared(DRAFTS, all); }
+    this.closeSelf();
+  }
   setScope(scope, cx) {
     if (!this.root || scope === this.scope) { this.choosingScope = false; cx.notify(); return; }
-    const all = { ...(shared(SCOPE) ?? {}) }; all[`${this.on ?? ""}:${this.root}`] = scope; setShared(SCOPE, all);
+    this.remember(SCOPE, scope);
     this.scope = scope; this.choosingScope = false; this.composer = null; this.setLines([]);
     this.comments = this.loadDrafts(scope); this.rebuild();
     this.refresh(cx); cx.notify();
@@ -541,7 +581,7 @@ export default class Changes extends View {
     const rows = (indexes ? indexes.sort((a, b) => a - b).map((i) => this.rows[i]) : this.rows).filter(Boolean).slice(0, 400);
     const span = this.span(rows), title = `${this.open}${span ? `:${span.replace(/^(removed )?lines? /, "")}` : ""}`;
     const head = indexes ? `In ${this.where(this.open)}, ${span || "these lines"} of the diff (${this.scopeWords()}; new-file line numbers; - lines are removed):` : `The diff of ${this.where(this.open)} (${this.scopeWords()}):`;
-    cx.spawn(async (cx) => { try { await ask({ title, context: `${head}\n${this.quote(rows)}` }); } catch (e) { this.note_ = `Ask failed: ${e}`; } cx.notify(); });
+    this.send(title, `${head}\n${this.quote(rows)}`, null, cx);
   }
 
   // Every comment, with its lines, as one review message.
@@ -562,12 +602,7 @@ export default class Changes extends View {
     });
     const n = list.length, title = `Review · ${n} comment${n > 1 ? "s" : ""}`;
     const context = `Code review of ${this.root}${this.on ? ` (on ${this.on})` : ""}: ${this.scopeWords()}. ${n} comment${n > 1 ? "s" : ""}. Line numbers are new-file numbers; "-" lines are removed.\n\n${parts.join("\n\n")}`;
-    this.submitting = Date.now();
-    cx.spawn(async (cx) => {
-      try { const r = await ask({ title, context, sent: SENT }); if (r === "sent") this.setComments([], cx); else if (r === "none") this.submitting = null; }
-      catch (e) { this.note_ = `Submit failed: ${e}`; this.submitting = null; }
-      cx.notify();
-    });
+    this.send(title, context, this.draftKey(), cx);
   }
 
   commit(cx) {
@@ -615,9 +650,10 @@ export default class Changes extends View {
   // The diff's width: the view's, less the file list column beside it.
   diffWidth() { return (this.size?.width ?? 368) - (this.side() ? LIST_WIDTH : 0); }
 
-  // The tree's rows, made again only when the files or a folder's state change.
+  // The tree's rows, made again only when the files, a folder's state or the appearance change.
   treeRows() {
-    if (this.tree?.files !== this.files || this.tree.version !== this.treeVersion) this.tree = { files: this.files, version: this.treeVersion, rows: treeRows(this.files, this.collapsed) };
+    const dark = Boolean(settings().dark);
+    if (this.tree?.files !== this.files || this.tree.version !== this.treeVersion || this.tree.dark !== dark) this.tree = { files: this.files, version: this.treeVersion, dark, rows: treeRows(this.files, this.collapsed, dark) };
     return this.tree.rows;
   }
 
@@ -640,11 +676,13 @@ export default class Changes extends View {
       if (row.dir) {
         return h_flex().id(`change-dir-${row.dir}`).h(28).flex_none().pl(indent(row.depth)).pr(8).gap(6).items_center().rounded(7).cursor_pointer().hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.toggleFolder(row.dir, cx))
           .child(svg(`mods/reviewer/chevron-${row.open ? "down" : "right"}.svg`).size(11).flex_none().text_color(t.dim))
+          .child(image(row.icon).size(16).flex_none())
           .child(div().min_w(0).truncate().text_color(t.muted).child(row.name));
       }
       const f = row.file, name = f.path.split("/").pop(), k = perFile[f.path];
       return h_flex().id(`change-${f.path}`).h(28).flex_none().pl(indent(row.depth)).pr(8).gap(8).items_center().rounded(7).cursor_pointer().when(this.open === f.path, (e) => e.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.pick(f.path, cx))
         .child(div().w(14).text_size(11).text_color(f.status === "A" ? t.ansi2 : f.status === "D" ? t.ansi1 : f.status === "U" ? t.ansi1 : t.blocked).child(f.status))
+        .child(image(row.icon).size(16).flex_none())
         .child(div().id(`change-name-${f.path}`).flex_1().min_w(0).truncate().tooltip(f.path).child(name))
         // One speech bubble: the draft count when there are drafts, and a click comments on the whole file.
         .child(h_flex().id(`comment-file-${f.path}`).h(18).min_w(18).px(k ? 5 : 0).gap(3).items_center().justify_center().rounded(4).cursor_pointer()
@@ -724,9 +762,7 @@ export default class Changes extends View {
     else if (key() !== this.context || (request?.id !== this.tried && this.requestedFile(request) !== null)) this.refresh(cx);
     const size = codeSize();
     if (size !== this.fontSize) { this.fontSize = size; this.row = rowOf(size); this.measure(); }
-    // The dialog reports a sent review through a shared key; the draft goes.
-    const sentAt = shared(SENT);
-    if (this.submitting && typeof sentAt === "number" && sentAt >= this.submitting) { this.submitting = null; cx.timer.after(1, (cx) => this.setComments([], cx)); }
+    if (this.outgoing && shared(SENT) === this.outgoing.id) { const { drafts } = this.outgoing; this.outgoing = null; cx.timer.after(1, (cx) => this.sent(drafts, cx)); }
     const t = theme(), colors = palette(props()?.palette, t), add = this.files.reduce((n, f) => n + f.add, 0), del = this.files.reduce((n, f) => n + f.del, 0);
     const enabled = Boolean(this.message.trim() && this.root && !this.busy && !this.loading);
     const target = this.target(), n = this.comments.length, canAsk = Boolean(this.open && this.rows.length), side = this.side();
@@ -776,6 +812,7 @@ export default class Changes extends View {
   pick(path, cx) {
     this.open = this.open === path ? null : path; this.setLines([]); this.note_ = null;
     this.closed = !this.open;
+    if (this.open) this.remember(LAST, this.open);
     const context = this.context;
     if (this.open) cx.spawn(async (cx) => {
       try { await this.load(path, context); }

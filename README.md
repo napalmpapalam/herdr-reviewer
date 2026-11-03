@@ -13,6 +13,9 @@ message.
 - **Syntax-colored diffs** in VS Code's Dark+ (or `one-dark-pro`, or your
   terminal theme's ansi colors), with line numbers, hunk headers and
   clearly tinted added and removed rows.
+- **Material file and folder icons** in the file tree, from
+  [Material Icon Theme](https://github.com/material-extensions/vscode-material-icon-theme)
+  5.40.0, picked by the same rules as in VS Code.
 - **Three review scopes**: *Uncommitted* (working tree vs `HEAD`),
   *Last commit* (that commit plus whatever is uncommitted) and *vs main*
   (everything since the branch left its base, committed or not). A branch
@@ -70,6 +73,8 @@ Everything the shipped panel did (file list, diff, commit box) stays.
 4. Or open it as a dialog over the window, 90% of its width and height:
    bind a key to `mod.open:reviewer` in `keys.json` (for example
    `"cmd-r": "mod.open:reviewer"`); the key closes it again, and so does Esc.
+   Once a review or a question is sent, the dialog closes by itself. It
+   opens again on the file you picked last in that repo.
 
 Or ask the agent in your Herdr window to add
 `herdr.dev/mods/vytasgavelis/reviewer`; the steps are in Herdr's
@@ -136,5 +141,7 @@ folder can rebuild it from there.
 ## License
 
 MIT, see [LICENSE](LICENSE). The mod started as a clone of Herdr's shipped
-`changes` mod (Apache-2.0) and uses Lucide icons (ISC); see
-[THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES).
+`changes` mod (Apache-2.0) and uses Lucide icons (ISC) and Material Icon
+Theme icons (MIT); see [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES). To vendor
+the Material icons again, run `node tools/build-icons.mjs` from the
+repository root (needs npm and tar).
