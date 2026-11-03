@@ -39,8 +39,14 @@ fill, `foreground` text at 13px. Top to bottom:
   sits under the header, at most 200px tall then it scrolls; at 1000px and
   wider (the dialog) it is a 300px column right of the diff, its full
   height, with a 1px `border` line on its left, and long diff lines wrap
-  to the diff's width. Each row: a status letter (A `ansi2`, D and U `ansi1`, M `blocked`), the
-  folder in `dim` then the name, one speech-bubble button (`comment.svg`)
+  to the diff's width. The files form a folder tree: folders first, then
+  files, each sorted by name; a folder that holds one folder and no files
+  shares its row with it ("k8s/kind"). A folder row has an 11px `dim`
+  chevron (`chevron-down.svg` open, `chevron-right.svg` folded) and its
+  name in `muted`; a click folds or opens it, and a file opened from
+  another mod opens its folders. Rows indent 14px per level. A file row:
+  a status letter (A `ansi2`, D and U `ansi1`, M `blocked`), the file
+  name (its tooltip is the path), one speech-bubble button (`comment.svg`)
   per file, `+n` and `−n` on the right. With no drafts the bubble is an
   18px `muted` 12px icon (`hover` background on hover); with drafts it
   becomes a badge, the count at 10px beside a 10px icon on `accent` at 20%

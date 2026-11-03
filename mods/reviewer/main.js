@@ -26,8 +26,8 @@
 // left its base (the pull-request view); "reviewer.scope" cycles it.
 // Long diff lines wrap to the panel's width (wrap()) instead of scrolling
 // sideways; a hunk header stays one truncated line.
-// A view at least SIDE_LIST wide, such as the dialog, shows the file list as a
-// LIST_WIDTH column right of the diff (side()).
+// The file list is a folder tree (treeRows()). A view at least SIDE_LIST wide,
+// such as the dialog, shows it as a LIST_WIDTH column right of the diff (side()).
 // Props: { palette: "one-dark-pro" | "theme" | "dark-plus" (default: dark-plus),
 //          font_size: px (default: the terminal's font size minus one),
 //          base: the branch reviews are against (default: origin/HEAD, else main, else master) }.
@@ -67,6 +67,35 @@ const charOf = (size) => size * 0.62;
 const LIST_WIDTH = 300, SIDE_LIST = 1000;
 
 // A row's identity across reloads: its kind, number and text.
+// The changed files as folder-tree rows: { dir, name, depth, open } and { file, depth }. A folder
+// that holds one folder and no files shares its row with it ("k8s/kind"), as VS Code's compact
+// folders do. Folders come before files; a collapsed folder's rows are left out.
+function treeRows(files, collapsed) {
+  const root = { dirs: new Map(), files: [] };
+  for (const f of files) {
+    let node = root, path = "";
+    for (const part of f.path.split("/").slice(0, -1)) {
+      path = path ? `${path}/${part}` : part;
+      if (!node.dirs.has(part)) node.dirs.set(part, { name: part, path, dirs: new Map(), files: [] });
+      node = node.dirs.get(part);
+    }
+    node.files.push(f);
+  }
+  const rows = [];
+  const walk = (node, depth) => {
+    for (let dir of [...node.dirs.values()].sort((a, b) => a.name.localeCompare(b.name))) {
+      let name = dir.name;
+      while (!dir.files.length && dir.dirs.size === 1) { dir = dir.dirs.values().next().value; name += "/" + dir.name; }
+      const open = !collapsed.has(dir.path);
+      rows.push({ dir: dir.path, name, depth, open });
+      if (open) walk(dir, depth + 1);
+    }
+    for (const f of node.files.sort((a, b) => a.path.localeCompare(b.path))) rows.push({ file: f, depth });
+  };
+  walk(root, 0);
+  return rows;
+}
+
 const desc = (r) => ({ kind: r.kind, number: r.number ?? null, text: r.text });
 const descKey = (d) => `${d.kind}|${d.number}|${d.text}`;
 
@@ -94,6 +123,7 @@ export default class Changes extends View {
     // Opened as the send dialog (ask.js): this copy is the dialog, nothing else.
     if (props()?.dialog) { this.dialog = Object.create(Dialog.prototype); this.dialog.init(_props, cx); return; }
     this.files = []; this.rows = []; this.index = new Map(); this.items = []; this.sizes = []; this.gutter = 30; this.message = "";
+    this.collapsed = new Set(); this.treeVersion = 0;
     this.comments = []; this.composer = null; this.handle = cx.focus_handle(); this.scroll = VirtualListScrollHandle.new();
     this.fontSize = codeSize(); this.row = rowOf(this.fontSize);
     this.scope = "work"; this.scopeInfo = null; this.choosingScope = false; this.ref = "HEAD";
@@ -213,6 +243,7 @@ export default class Changes extends View {
         const requested = this.requestedFile(request);
         if (requested !== null) {
           this.open = files.some(f => f.path === requested) ? requested : null;
+          if (this.open) this.reveal(this.open);
           this.closed = !this.open; this.composer = null; this.note_ = this.open ? null : "Requested file has no diff in this scope (or is outside the first 1,000 files).";
           this.setLines([]);
           if (this.open) this.scroll.scroll_to_item(0);
@@ -582,13 +613,37 @@ export default class Changes extends View {
   // The diff's width: the view's, less the file list column beside it.
   diffWidth() { return (this.size?.width ?? 368) - (this.side() ? LIST_WIDTH : 0); }
 
-  // The changed files, one row each; the caller places and sizes the list.
+  // The tree's rows, made again only when the files or a folder's state change.
+  treeRows() {
+    if (this.tree?.files !== this.files || this.tree.version !== this.treeVersion) this.tree = { files: this.files, version: this.treeVersion, rows: treeRows(this.files, this.collapsed) };
+    return this.tree.rows;
+  }
+
+  toggleFolder(path, cx) {
+    if (!this.collapsed.delete(path)) this.collapsed.add(path);
+    this.treeVersion++; cx.notify();
+  }
+
+  // Opens every folder above `path`, so the file's row shows.
+  reveal(path) {
+    const parts = path.split("/");
+    for (let i = 1; i < parts.length; i++) this.collapsed.delete(parts.slice(0, i).join("/"));
+    this.treeVersion++;
+  }
+
+  // The changed files as a folder tree; the caller places and sizes the list. A click on a folder folds it.
   fileList(t, perFile) {
-    return v_flex().id("changes-list").overflow_y_scrollbar().p(6).border_color(t.border).children(this.files.map((f) => {
-      const parts = f.path.split("/"), name = parts.pop(), k = perFile[f.path];
-      return h_flex().id(`change-${f.path}`).h(28).flex_none().px(8).gap(8).items_center().rounded(7).cursor_pointer().when(this.open === f.path, (e) => e.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.pick(f.path, cx))
+    const indent = (depth) => 8 + depth * 14;
+    return v_flex().id("changes-list").overflow_y_scrollbar().p(6).border_color(t.border).children(this.treeRows().map((row) => {
+      if (row.dir) {
+        return h_flex().id(`change-dir-${row.dir}`).h(28).flex_none().pl(indent(row.depth)).pr(8).gap(6).items_center().rounded(7).cursor_pointer().hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.toggleFolder(row.dir, cx))
+          .child(svg(`mods/reviewer/chevron-${row.open ? "down" : "right"}.svg`).size(11).flex_none().text_color(t.dim))
+          .child(div().min_w(0).truncate().text_color(t.muted).child(row.name));
+      }
+      const f = row.file, name = f.path.split("/").pop(), k = perFile[f.path];
+      return h_flex().id(`change-${f.path}`).h(28).flex_none().pl(indent(row.depth)).pr(8).gap(8).items_center().rounded(7).cursor_pointer().when(this.open === f.path, (e) => e.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.pick(f.path, cx))
         .child(div().w(14).text_size(11).text_color(f.status === "A" ? t.ansi2 : f.status === "D" ? t.ansi1 : f.status === "U" ? t.ansi1 : t.blocked).child(f.status))
-        .child(h_flex().flex_1().min_w(0).child(div().text_color(t.dim).truncate().child(parts.length ? parts.join("/") + "/" : "")).child(div().max_w(260).min_w(0).truncate().child(name)))
+        .child(div().id(`change-name-${f.path}`).flex_1().min_w(0).truncate().tooltip(f.path).child(name))
         // One speech bubble: the draft count when there are drafts, and a click comments on the whole file.
         .child(h_flex().id(`comment-file-${f.path}`).h(18).min_w(18).px(k ? 5 : 0).gap(3).items_center().justify_center().rounded(4).cursor_pointer()
           .when(Boolean(k), (e) => e.bg(t.accent + "33").text_size(10).text_color(t.foreground))
@@ -693,7 +748,7 @@ export default class Changes extends View {
         .child(div().flex_1()).child(div().text_size(11).text_color(t.ansi2).child(`+${add}`)).child(div().text_size(11).text_color(t.ansi1).child(`−${del}`))
         .when(n > 0, (e) => e.child(link("review-discard", "Discard", (_e, cx) => this.setComments([], cx))).child(button("review-submit", `Submit review · ${n}`, true, (_e, cx) => this.submit(cx))))
         .when(n === 0 && canAsk, (e) => e.child(button("ask", "Ask about diff", false, (_e, cx) => this.askAbout(null, cx)))))
-      .when(!side, (e) => e.child(this.fileList(t, perFile).flex_none().h(Math.min(200, Math.max(44, this.files.length * 28 + 12))).border_b(1)))
+      .when(!side, (e) => e.child(this.fileList(t, perFile).flex_none().h(Math.min(200, Math.max(44, this.treeRows().length * 28 + 12))).border_b(1)))
       .when(this.limited, el => el.child(div().px(12).py(4).text_size(11).text_color(t.dim).child("Showing the first 1,000 changed files")))
       .child(h_flex().flex_1().min_h(0).items_stretch()
         .child(div().flex_1().min_w(0).min_h(0).relative().font_family(codeFont()).text_size(this.fontSize)
