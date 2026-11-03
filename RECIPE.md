@@ -193,8 +193,12 @@ fill, `foreground` text at 13px. Top to bottom:
   **↑/↓** move it over the shown rows, folders included, and open the file
   it lands on; **←** closes an open folder, else goes to the parent
   folder; **→** opens a closed folder, else goes to its first row. The
-  tree list does not scroll to its cursor: only a virtual list can be
-  scrolled from a script. **Diff:** a line cursor, drawn like the comment
+  tree list scrolls only as far as it takes to keep the cursor row in
+  view. Only a virtual list can be scrolled from a script, and a virtual
+  list's rows cannot hold their own clicks (the comment button), so the
+  tree scrolls by hand: each row sits at a fixed y (28px rows, 6px
+  padding), only the shown rows draw, the wheel moves the offset, and a
+  4px `dim` thumb at 40% shows where the view is. **Diff:** a line cursor, drawn like the comment
   box's highlight, starts on the first `+`/`-` row of a newly opened diff
   and never stands on a meta row; a reload of the same diff keeps the
   cursor and its range on their lines (by kind, number and text, as
