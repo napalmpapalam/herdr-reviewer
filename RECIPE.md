@@ -115,7 +115,9 @@ fill, `foreground` text at 13px. Top to bottom:
   branch (vs main: everything since the branch left it, committed or not,
   the pull-request view). The base branch is `props.base`, else
   `origin/HEAD`'s branch, else `main`, else `master`; the merge base is
-  taken against the local branch when there is one, else `origin/<base>`.
+  taken against `origin/<base>` when it exists, else the local branch, as
+  a pull request compares (a local base that is never pulled falls
+  behind). The picker names the ref it uses ("vs origin/main").
   A repo opens in "vs main" when the branch has left the base, else
   "Uncommitted"; the choice is remembered per repo and machine in shared
   `reviewer.scope`. The file list is `git diff <ref> --name-status`

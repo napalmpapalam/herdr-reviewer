@@ -257,15 +257,17 @@ export default class Changes extends View {
     let base = typeof props()?.base === "string" ? props().base : null;
     if (!base) { const h = await out(["symbolic-ref", "-q", "refs/remotes/origin/HEAD"]); if (h) base = h.replace(/^refs\/remotes\/origin\//, ""); }
     if (!base) for (const b of ["main", "master"]) { if (await out(["rev-parse", "--verify", "-q", `refs/heads/${b}`]) !== null) { base = b; break; } }
-    let merge = null;
+    let merge = null, ref = base;
     if (base && branch !== base) {
-      const baseRef = (await out(["rev-parse", "--verify", "-q", `refs/heads/${base}`])) !== null ? base : `origin/${base}`;
-      merge = await out(["merge-base", baseRef, "HEAD"]);
+      // The remote branch first, as a pull request compares: a local main that is never pulled
+      // falls behind, and then the branch view shows everything merged since as new changes.
+      ref = (await out(["rev-parse", "--verify", "-q", `refs/remotes/origin/${base}`])) !== null ? `origin/${base}` : base;
+      merge = await out(["merge-base", ref, "HEAD"]);
       if (merge && (await out(["rev-parse", "HEAD"])) === merge) merge = null;
     }
     const last = (await out(["rev-parse", "--verify", "-q", "HEAD~1"])) !== null ? await out(["rev-parse", "--short", "HEAD"]) : null;
     const subject = last ? await out(["log", "-1", "--format=%s"]) : null;
-    return { branch, base, merge, last, subject };
+    return { branch, base: ref, merge, last, subject };
   }
 
   // The scope's name for the header and the submit message.
