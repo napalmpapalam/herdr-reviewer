@@ -552,6 +552,17 @@ export default class Changes extends View {
     this.closeComposer(cx);
   }
 
+  // The code of the picked rows, without hunk headers, line numbers or +/- marks, on the clipboard.
+  // The button reads "Copied" for a moment.
+  copyLines(target, cx) {
+    const rows = this.rows.slice(target.from, target.to + 1).filter((r) => r.kind !== "@" && r.kind !== "");
+    // An empty line is stored as one space, so the diff draws it.
+    cx.write_to_clipboard(rows.map((r) => r.text === " " ? "" : r.text).join("\n"));
+    this.copied = true;
+    cx.notify();
+    cx.timer.after(1500, (cx) => { this.copied = false; cx.notify(); });
+  }
+
   deleteComment(cx) {
     const id = this.composer?.editing;
     if (id) this.setComments(this.comments.filter((c) => c.id !== id));
@@ -723,6 +734,7 @@ export default class Changes extends View {
       .child(h_flex().items_center().gap(6).flex_wrap()
         .child(button("comment-add", editing ? "Save" : "Add comment", true, (_e, cx) => this.addComment(cx), "Enter"))
         .child(link("comment-cancel", "Cancel", t.dim, (_e, cx) => this.closeComposer(cx), "Esc"))
+        .when(!c.whole && Boolean(target), (e) => e.child(link("comment-copy", this.copied ? "Copied" : "Copy", this.copied ? t.accent : t.dim, (_e, cx) => this.copyLines(target, cx), "Copy these lines")))
         .when(editing, (e) => e.child(div().flex_1()).child(link("comment-delete", "Delete", t.ansi1, (_e, cx) => this.deleteComment(cx), "Remove this comment from the review"))));
   }
 

@@ -104,7 +104,10 @@ fill, `foreground` text at 13px. Top to bottom:
   are no longer in the diff"); the textarea (4 rows growing to 14, 8px
   corners, 1px `input` border, `background` fill, placeholder "Leave a
   comment on these lines…"); then **Add comment** / **Save** (26px,
-  `solid`, tooltip "Enter"), "Cancel" in `dim` (tooltip "Esc"), and when
+  `solid`, tooltip "Enter"), "Cancel" in `dim` (tooltip "Esc"), for a
+  line target "Copy" in `dim` (tooltip "Copy these lines"; it puts the
+  target rows' code on the clipboard, without hunk headers, numbers or
+  +/- marks, and reads "Copied" in `accent` for 1.5 s), and when
   editing "Delete" in `ansi1` at the far right. No hint text sits in the
   box itself. Enter is the textarea's submit; a submit with shift held is
   ignored, since the textarea inserts the newline itself. On a panel under
@@ -160,7 +163,9 @@ fill, `foreground` text at 13px. Top to bottom:
   open and empty, **click a row outside the highlight** to widen the
   comment to the range between them, or **click any highlighted row** to
   clear the selection and close the box. **Click a hunk header** to target
-  the whole hunk. **Esc**, the ×, or Cancel closes it too. The keyboard
+  the whole hunk. **Copy** puts the picked lines' code on the clipboard
+  (the diff text itself can't be selected). **Esc**, the ×, or Cancel
+  closes it too. The keyboard
   goes to the textarea when the box opens (and again 300 ms later). The
   list does not scroll: what was clicked is on screen, and a scroll made
   the rows jump. Only a whole-file comment scrolls to the top of the diff,
