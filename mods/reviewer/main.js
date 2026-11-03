@@ -74,7 +74,7 @@ const codeSize = () => Number(props()?.font_size) || Math.max(9, (Number(setting
 const rowOf = (size) => Math.round(size * 1.8);
 const charOf = (size) => size * 0.62;
 // The file list's width when it is a column beside the diff, and the view width that gets one.
-const LIST_WIDTH = 300, SIDE_LIST = 1000;
+const LIST_WIDTH = 300, SIDE_LIST = 1000, TREE_ROW = 28, TREE_PAD = 6;
 
 // A row's identity across reloads: its kind, number and text.
 // The changed files as folder-tree rows: { dir, name, depth, open, icon } and { file, depth, icon }. A folder
@@ -137,6 +137,8 @@ export default class Changes extends View {
     if (props()?.dialog) { this.dialog = Object.create(Dialog.prototype); this.dialog.init(_props, cx); return; }
     this.files = []; this.rows = []; this.index = new Map(); this.items = []; this.sizes = []; this.gutter = 30; this.message = "";
     this.collapsed = new Set(); this.treeVersion = 0;
+    // The tree scrolls by hand (fileList): its offset, its shown height, and a key asking to show the cursor row.
+    this.treeScroll = 0; this.treeHeight = null; this.treeReveal = false;
     // The keyboard: the side it moves ("tree" or "diff"), the tree row under its cursor (a file or
     // folder path), and the diff cursor with the other end of its range (row indexes).
     this.pane = "diff"; this.treeAt = null; this.cursor = null; this.anchor = null;
@@ -714,7 +716,7 @@ export default class Changes extends View {
   }
 
   toggleFolder(path, cx) {
-    this.pane = "tree"; this.treeAt = path;
+    this.pane = "tree"; this.treeAt = path; this.treeReveal = true;
     if (!this.collapsed.delete(path)) this.collapsed.add(path);
     this.treeVersion++; cx.notify();
   }
@@ -763,7 +765,7 @@ export default class Changes extends View {
     const moveTo = (j) => {
       const r = rows[j];
       if (!r) return;
-      this.treeAt = r.dir ?? r.file.path;
+      this.treeAt = r.dir ?? r.file.path; this.treeReveal = true;
       if (r.file && this.open !== r.file.path) this.pick(r.file.path, cx);
       cx.notify();
     };
@@ -819,31 +821,52 @@ export default class Changes extends View {
   }
 
   // The changed files as a folder tree; the caller places and sizes the list. A click on a folder folds it.
+  // It scrolls by hand: only a virtual list scrolls from a script, and a virtual list's rows can't take
+  // their own clicks (the comment button). So each row sits at a fixed y and only the shown ones draw.
   fileList(t, perFile) {
     const indent = (depth) => 8 + depth * 14, rows = this.treeRows();
     const at = this.keys("tree") ? rows[this.treeIndex(rows)] : null, ring = (e, row) => e.border_1().border_color(row === at ? t.accent : NONE);
-    return v_flex().id("changes-list").overflow_y_scrollbar().p(6).children(rows.map((row) => {
-      if (row.dir) {
-        return h_flex().id(`change-dir-${row.dir}`).h(28).flex_none().pl(indent(row.depth)).pr(8).gap(6).items_center().rounded(7).map((e) => ring(e, row)).cursor_pointer().hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.toggleFolder(row.dir, cx))
-          .child(svg(`mods/reviewer/chevron-${row.open ? "down" : "right"}.svg`).size(11).flex_none().text_color(t.dim))
-          .child(image(row.icon).size(16).flex_none())
-          .child(div().min_w(0).truncate().text_color(t.muted).child(row.name));
-      }
-      const f = row.file, name = f.path.split("/").pop(), k = perFile[f.path];
-      return h_flex().id(`change-${f.path}`).h(28).flex_none().pl(indent(row.depth)).pr(8).gap(8).items_center().rounded(7).map((e) => ring(e, row)).cursor_pointer().when(this.open === f.path, (e) => e.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.pick(f.path, cx))
-        .child(div().w(14).text_size(11).text_color(f.status === "A" ? t.ansi2 : f.status === "D" ? t.ansi1 : f.status === "U" ? t.ansi1 : t.blocked).child(f.status))
+    const total = rows.length * TREE_ROW + 2 * TREE_PAD, height = this.treeHeight ?? total, maxScroll = Math.max(0, total - height);
+    this.treeScroll = Math.max(0, Math.min(this.treeScroll, maxScroll));
+    // A key moved the cursor: scroll only as far as it takes to show its row.
+    if (this.treeReveal && this.treeHeight !== null) {
+      const top = this.treeIndex(rows) * TREE_ROW;
+      this.treeScroll = Math.min(Math.max(this.treeScroll, top + TREE_ROW + 2 * TREE_PAD - height), top);
+      this.treeReveal = false;
+    }
+    const y = (i) => TREE_PAD + i * TREE_ROW - this.treeScroll, shown = (i) => y(i) + TREE_ROW > 0 && y(i) < height;
+    const thumb = Math.max(16, (height * height) / total);
+    return div().id("changes-list").relative().overflow_hidden()
+      // Sizes and the wheel come in screen pixels; rows are placed in layout pixels, which the app's zoom scales.
+      .on_size_change((size, cx) => { const h = size.height / settings().zoom; if (h !== this.treeHeight) { this.treeHeight = h; cx.notify(); } })
+      .on_scroll_wheel((e, cx) => { this.treeScroll = Math.max(0, Math.min(this.treeScroll - e.delta.y / settings().zoom, maxScroll)); cx.notify(); })
+      .children(rows.map((row, i) => (shown(i) ? this.treeRow(row, t, perFile, indent, ring).absolute().left(TREE_PAD).right(TREE_PAD).top(y(i)) : null)).filter(Boolean))
+      .when(maxScroll > 0, (e) => e.child(div().absolute().right(2).w(4).rounded(2).bg(t.dim + "66").top(((height - thumb) * this.treeScroll) / maxScroll).h(thumb)))
+      .when(!this.files.length, (e) => e.child(div().p(8).text_color(t.dim).child(this.error || (this.loading ? "Loading changes…" : this.root ? "No uncommitted changes" : "No folder"))));
+  }
+
+  // One tree row: a folder (a click folds it) or a changed file (a click opens its diff).
+  treeRow(row, t, perFile, indent, ring) {
+    if (row.dir) {
+      return h_flex().id(`change-dir-${row.dir}`).h(TREE_ROW).flex_none().pl(indent(row.depth)).pr(8).gap(6).items_center().rounded(7).map((e) => ring(e, row)).cursor_pointer().hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.toggleFolder(row.dir, cx))
+        .child(svg(`mods/reviewer/chevron-${row.open ? "down" : "right"}.svg`).size(11).flex_none().text_color(t.dim))
         .child(image(row.icon).size(16).flex_none())
-        .child(div().id(`change-name-${f.path}`).flex_1().min_w(0).truncate().tooltip(f.path).child(name))
-        // One speech bubble: the draft count when there are drafts, and a click comments on the whole file.
-        .child(h_flex().id(`comment-file-${f.path}`).h(18).min_w(18).px(k ? 5 : 0).gap(3).items_center().justify_center().rounded(4).cursor_pointer()
-          .when(Boolean(k), (e) => e.bg(t.accent + "33").text_size(10).text_color(t.foreground))
-          .when(!k, (e) => e.text_color(t.muted))
-          .hover((s) => s.bg(k ? t.accent + "55" : t.hover).text_color(t.foreground))
-          .tooltip(k ? `${k} draft comment${k > 1 ? "s" : ""} · click to comment on the whole file` : "Comment on the whole file")
-          .on_click((_e, cx) => { cx.stop_propagation(); this.commentFile(f.path, cx); })
-          .when(Boolean(k), (e) => e.child(String(k))).child(svg("mods/reviewer/comment.svg").size(k ? 10 : 12)))
-        .when(f.add > 0, (e) => e.child(div().text_size(11).text_color(t.ansi2).child(`+${f.add}`))).when(f.del > 0, (e) => e.child(div().text_size(11).text_color(t.ansi1).child(`−${f.del}`)));
-    })).when(!this.files.length, (e) => e.child(div().p(8).text_color(t.dim).child(this.error || (this.loading ? "Loading changes…" : this.root ? "No uncommitted changes" : "No folder"))));
+        .child(div().min_w(0).truncate().text_color(t.muted).child(row.name));
+    }
+    const f = row.file, name = f.path.split("/").pop(), k = perFile[f.path];
+    return h_flex().id(`change-${f.path}`).h(TREE_ROW).flex_none().pl(indent(row.depth)).pr(8).gap(8).items_center().rounded(7).map((e) => ring(e, row)).cursor_pointer().when(this.open === f.path, (e) => e.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.pick(f.path, cx))
+      .child(div().w(14).text_size(11).text_color(f.status === "A" ? t.ansi2 : f.status === "D" ? t.ansi1 : f.status === "U" ? t.ansi1 : t.blocked).child(f.status))
+      .child(image(row.icon).size(16).flex_none())
+      .child(div().id(`change-name-${f.path}`).flex_1().min_w(0).truncate().tooltip(f.path).child(name))
+      // One speech bubble: the draft count when there are drafts, and a click comments on the whole file.
+      .child(h_flex().id(`comment-file-${f.path}`).h(18).min_w(18).px(k ? 5 : 0).gap(3).items_center().justify_center().rounded(4).cursor_pointer()
+        .when(Boolean(k), (e) => e.bg(t.accent + "33").text_size(10).text_color(t.foreground))
+        .when(!k, (e) => e.text_color(t.muted))
+        .hover((s) => s.bg(k ? t.accent + "55" : t.hover).text_color(t.foreground))
+        .tooltip(k ? `${k} draft comment${k > 1 ? "s" : ""} · click to comment on the whole file` : "Comment on the whole file")
+        .on_click((_e, cx) => { cx.stop_propagation(); this.commentFile(f.path, cx); })
+        .when(Boolean(k), (e) => e.child(String(k))).child(svg("mods/reviewer/comment.svg").size(k ? 10 : 12)))
+      .when(f.add > 0, (e) => e.child(div().text_size(11).text_color(t.ansi2).child(`+${f.add}`))).when(f.del > 0, (e) => e.child(div().text_size(11).text_color(t.ansi1).child(`−${f.del}`)));
   }
   // The file list in a frame that draws the keyboard's border over it; the caller places and sizes it.
   treePane(t, perFile) {
@@ -943,7 +966,7 @@ export default class Changes extends View {
         .child(div().flex_1()).child(div().text_size(11).text_color(t.ansi2).child(`+${add}`)).child(div().text_size(11).text_color(t.ansi1).child(`−${del}`))
         .when(n > 0, (e) => e.child(link("review-discard", "Discard", (_e, cx) => this.setComments([], cx))).child(button("review-submit", `Submit review · ${n}`, true, (_e, cx) => this.submit(cx)).tooltip("S")))
         .when(n === 0 && canAsk, (e) => e.child(button("ask", "Ask about diff", false, (_e, cx) => this.askAbout(null, cx)))))
-      .when(!side, (e) => e.child(this.treePane(t, perFile).flex_none().h(Math.min(200, Math.max(44, this.treeRows().length * 28 + 12))).border_b(1)))
+      .when(!side, (e) => e.child(this.treePane(t, perFile).flex_none().h(Math.min(200, Math.max(44, this.treeRows().length * TREE_ROW + 2 * TREE_PAD))).border_b(1)))
       .when(this.limited, el => el.child(div().px(12).py(4).text_size(11).text_color(t.dim).child("Showing the first 1,000 changed files")))
       .child(h_flex().flex_1().min_h(0).items_stretch()
         .child(div().flex_1().min_w(0).min_h(0).relative().font_family(codeFont()).text_size(this.fontSize)
