@@ -42,11 +42,13 @@ fill, `foreground` text at 13px. Top to bottom:
   to the diff's width. The files form a folder tree: folders first, then
   files, each sorted by name; a folder that holds one folder and no files
   shares its row with it ("k8s/kind"). A folder row has an 11px `dim`
-  chevron (`chevron-down.svg` open, `chevron-right.svg` folded) and its
+  chevron (`chevron-down.svg` open, `chevron-right.svg` folded), a 16px
+  Material Icon Theme folder icon (open or closed with the row) and its
   name in `muted`; a click folds or opens it, and a file opened from
   another mod opens its folders. Rows indent 14px per level. A file row:
-  a status letter (A `ansi2`, D and U `ansi1`, M `blocked`), the file
-  name (its tooltip is the path), one speech-bubble button (`comment.svg`)
+  a status letter (A `ansi2`, D and U `ansi1`, M `blocked`), a 16px
+  Material Icon Theme file icon, the file name (its tooltip is the path),
+  one speech-bubble button (`comment.svg`)
   per file, `+n` and `−n` on the right. With no drafts the bubble is an
   18px `muted` 12px icon (`hover` background on hover); with drafts it
   becomes a badge, the count at 10px beside a 10px icon on `accent` at 20%
@@ -289,8 +291,22 @@ fill, `foreground` text at 13px. Top to bottom:
 - `herdr` calls: `spaces`, `panes`, `focused`, `exec`, `readTextFile`,
   `watchFolder`, `theme`, `settings`, `nextCommand`, `props`, `shared`,
   `setShared`, `agents`, `hc`, `notify`, `openOverlay`, `appHome`.
+  gpui-kit: `div`, `svg`, `image`.
   Programs run: `git`, `hc`.
 - Art: `changes.svg` from the clone (unused by the panel itself).
+- `icons.js`: `iconFile(path, dir, open, dark)` → the icon's path for
+  `image()`, with Material Icon Theme's rules: names match
+  case-insensitively, a path rule (".github/workflows") beats a name, a
+  name beats an extension, the longest extension wins, and a light
+  appearance (`settings().dark` false) checks the light table first.
+  `vendor/material-icon-theme/`: every file and folder icon (open and
+  closed), `table.js` and the theme's MIT license, made by
+  `tools/build-icons.mjs` from material-icon-theme 5.40.0.
+  `icon-names.js`: `bare` (a folder name without its ".", "_", "-" or
+  "__x__" decoration) and `opened` (the open variant of a folder icon),
+  shared with the build tool so the table's keys and the lookup agree.
+  The rows carry their icon (`treeRows()`), made again on an appearance
+  change.
 
 ## Watch out
 
@@ -360,3 +376,6 @@ fill, `foreground` text at 13px. Top to bottom:
 - Cancelling the dialog keeps the drafts; Discard removes them.
 - Right-clicking a row opens the dialog for that one line.
 - The mod needs nothing else installed: the dialog is its own overlay.
+- The file tree shows a Material folder icon on each folder row (open
+  while expanded) and a file icon on each file row: TypeScript on `.ts`,
+  a test icon on `.test.ts`, Node.js on `package.json`.

@@ -74,6 +74,17 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
+3. Material Icon Theme (MIT License)
+------------------------------------
+
+The file and folder icons in mods/reviewer/vendor/material-icon-theme/icons
+and the lookup table mods/reviewer/vendor/material-icon-theme/table.js are
+from Material Icon Theme 5.40.0
+(https://github.com/material-extensions/vscode-material-icon-theme),
+made by tools/build-icons.mjs. Its license is in
+mods/reviewer/vendor/material-icon-theme/LICENSE.
+
+
 Apache License 2.0 (applies to the Herdr-derived files listed in section 1)
 ===========================================================================
 

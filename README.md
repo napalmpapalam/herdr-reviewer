@@ -13,6 +13,9 @@ message.
 - **Syntax-colored diffs** in VS Code's Dark+ (or `one-dark-pro`, or your
   terminal theme's ansi colors), with line numbers, hunk headers and
   clearly tinted added and removed rows.
+- **Material file and folder icons** in the file tree, from
+  [Material Icon Theme](https://github.com/material-extensions/vscode-material-icon-theme)
+  5.40.0, picked by the same rules as in VS Code.
 - **Three review scopes**: *Uncommitted* (working tree vs `HEAD`),
   *Last commit* (that commit plus whatever is uncommitted) and *vs main*
   (everything since the branch left its base, committed or not). A branch
@@ -136,5 +139,7 @@ folder can rebuild it from there.
 ## License
 
 MIT, see [LICENSE](LICENSE). The mod started as a clone of Herdr's shipped
-`changes` mod (Apache-2.0) and uses Lucide icons (ISC); see
-[THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES).
+`changes` mod (Apache-2.0) and uses Lucide icons (ISC) and Material Icon
+Theme icons (MIT); see [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES). To vendor
+the Material icons again, run `node tools/build-icons.mjs` from the
+repository root (needs npm and tar).

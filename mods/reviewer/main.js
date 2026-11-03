@@ -26,18 +26,20 @@
 // left its base (the pull-request view); "reviewer.scope" cycles it.
 // Long diff lines wrap to the panel's width (wrap()) instead of scrolling
 // sideways; a hunk header stays one truncated line.
-// The file list is a folder tree (treeRows()). A view at least SIDE_LIST wide,
-// such as the dialog, shows it as a LIST_WIDTH column right of the diff (side()).
+// The file list is a folder tree (treeRows()) with Material Icon Theme
+// icons (icons.js). A view at least SIDE_LIST wide, such as the dialog,
+// shows it as a LIST_WIDTH column right of the diff (side()).
 // Props: { palette: "one-dark-pro" | "theme" | "dark-plus" (default: dark-plus),
 //          font_size: px (default: the terminal's font size minus one),
 //          base: the branch reviews are against (default: origin/HEAD, else main, else master) }.
-import { View, div, svg } from "gpui-kit";
+import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, Scrollbar, v_virtual_list, VirtualListScrollHandle, Popover } from "gpui-base";
 import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, nextCommand, props, shared, setShared } from "herdr";
 import { tokenize, languageOf } from "./highlight.js";
 import { ask } from "./ask.js";
 import { palette } from "./palette.js";
 import { Dialog } from "./dialog.js";
+import { iconFile } from "./icons.js";
 
 function location() {
   const space = spaces().find((s) => s.active), f = focused();
@@ -67,10 +69,10 @@ const charOf = (size) => size * 0.62;
 const LIST_WIDTH = 300, SIDE_LIST = 1000;
 
 // A row's identity across reloads: its kind, number and text.
-// The changed files as folder-tree rows: { dir, name, depth, open } and { file, depth }. A folder
+// The changed files as folder-tree rows: { dir, name, depth, open, icon } and { file, depth, icon }. A folder
 // that holds one folder and no files shares its row with it ("k8s/kind"), as VS Code's compact
 // folders do. Folders come before files; a collapsed folder's rows are left out.
-function treeRows(files, collapsed) {
+function treeRows(files, collapsed, dark) {
   const root = { dirs: new Map(), files: [] };
   for (const f of files) {
     let node = root, path = "";
@@ -87,10 +89,10 @@ function treeRows(files, collapsed) {
       let name = dir.name;
       while (!dir.files.length && dir.dirs.size === 1) { dir = dir.dirs.values().next().value; name += "/" + dir.name; }
       const open = !collapsed.has(dir.path);
-      rows.push({ dir: dir.path, name, depth, open });
+      rows.push({ dir: dir.path, name, depth, open, icon: iconFile(dir.path, true, open, dark) });
       if (open) walk(dir, depth + 1);
     }
-    for (const f of node.files.sort((a, b) => a.path.localeCompare(b.path))) rows.push({ file: f, depth });
+    for (const f of node.files.sort((a, b) => a.path.localeCompare(b.path))) rows.push({ file: f, depth, icon: iconFile(f.path, false, false, dark) });
   };
   walk(root, 0);
   return rows;
@@ -615,9 +617,10 @@ export default class Changes extends View {
   // The diff's width: the view's, less the file list column beside it.
   diffWidth() { return (this.size?.width ?? 368) - (this.side() ? LIST_WIDTH : 0); }
 
-  // The tree's rows, made again only when the files or a folder's state change.
+  // The tree's rows, made again only when the files, a folder's state or the appearance change.
   treeRows() {
-    if (this.tree?.files !== this.files || this.tree.version !== this.treeVersion) this.tree = { files: this.files, version: this.treeVersion, rows: treeRows(this.files, this.collapsed) };
+    const dark = Boolean(settings().dark);
+    if (this.tree?.files !== this.files || this.tree.version !== this.treeVersion || this.tree.dark !== dark) this.tree = { files: this.files, version: this.treeVersion, dark, rows: treeRows(this.files, this.collapsed, dark) };
     return this.tree.rows;
   }
 
@@ -640,11 +643,13 @@ export default class Changes extends View {
       if (row.dir) {
         return h_flex().id(`change-dir-${row.dir}`).h(28).flex_none().pl(indent(row.depth)).pr(8).gap(6).items_center().rounded(7).cursor_pointer().hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.toggleFolder(row.dir, cx))
           .child(svg(`mods/reviewer/chevron-${row.open ? "down" : "right"}.svg`).size(11).flex_none().text_color(t.dim))
+          .child(image(row.icon).size(16).flex_none())
           .child(div().min_w(0).truncate().text_color(t.muted).child(row.name));
       }
       const f = row.file, name = f.path.split("/").pop(), k = perFile[f.path];
       return h_flex().id(`change-${f.path}`).h(28).flex_none().pl(indent(row.depth)).pr(8).gap(8).items_center().rounded(7).cursor_pointer().when(this.open === f.path, (e) => e.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.pick(f.path, cx))
         .child(div().w(14).text_size(11).text_color(f.status === "A" ? t.ansi2 : f.status === "D" ? t.ansi1 : f.status === "U" ? t.ansi1 : t.blocked).child(f.status))
+        .child(image(row.icon).size(16).flex_none())
         .child(div().id(`change-name-${f.path}`).flex_1().min_w(0).truncate().tooltip(f.path).child(name))
         // One speech bubble: the draft count when there are drafts, and a click comments on the whole file.
         .child(h_flex().id(`comment-file-${f.path}`).h(18).min_w(18).px(k ? 5 : 0).gap(3).items_center().justify_center().rounded(4).cursor_pointer()
