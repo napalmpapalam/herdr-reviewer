@@ -8,7 +8,7 @@ each with the lines it is about, to the agent running in the space as one
 message. It replaces `changes` in a layout; everything the shipped panel did
 (file list, diff, commit box) stays. `mod.open:reviewer` opens it as a
 dialog over the window instead, 75% of its width and 90% of its height (`overlay` in
-`mod.json`).
+`mod.json`), without the commit bar.
 
 ![reviewer](preview.png)
 
@@ -118,8 +118,8 @@ fill, `foreground` text at 13px. Top to bottom:
   ("(empty)" in `dim` when cleared); it resizes with the text.
 - **Commit bar**: a 32px input "Commit message" (1px border, `accent`
   while focused) and a 32px Commit button (`solid` when there is a message
-  and a repo, `raised`/`dim` otherwise). An error line in `ansi1` above it
-  when something fails.
+  and a repo, `raised`/`dim` otherwise); a panel only, an overlay has none.
+  An error line in `ansi1` above it when something fails.
 
 ## How it behaves
 
@@ -140,7 +140,11 @@ fill, `foreground` text at 13px. Top to bottom:
   "Uncommitted"; the choice is remembered per repo and machine in shared
   `reviewer.scope`. The file list is `git diff <ref> --name-status`
   plus untracked files and conflicts from `git status`, sorted by path;
-  counts come from `git diff <ref> --numstat`; a file's diff is `git diff
+  counts come from `git diff <ref> --numstat`, and an untracked file's
+  (which has no numstat line) from one `grep -cHI '' -- <paths>` per
+  refresh over all of them: it counts a last line without a newline, as
+  the opened diff does, and skips binary files; without grep (Windows) an
+  untracked file is counted only when opened; a file's diff is `git diff
   <ref> -- path`. These automatic reads run with the flags Herdr's own
   Changes panel uses (`--no-optional-locks -c core.fsmonitor=false -c
   diff.autoRefreshIndex=false`), so focusing a repo never takes
@@ -170,6 +174,42 @@ fill, `foreground` text at 13px. Top to bottom:
   list does not scroll: what was clicked is on screen, and a scroll made
   the rows jump. Only a whole-file comment scrolls to the top of the diff,
   where its card sits.
+- **Keyboard.** The root element tracks the view's focus handle; its
+  `on_key_down` handles navigation only while that handle itself is
+  focused (`is_focused()`), so the commit input and the comment textarea
+  keep their keys. The app binds Tab (focus the next input) and Esc (close
+  the overlay), and a key binding runs before any `on_key_down`, so the
+  mod binds both itself (`cx.bind_keys` in `init`, context `Reviewer`, set
+  by the root's `key_context`); the deeper context wins. Its Esc leaves the
+  commit input, else closes the comment box, else closes an overlay
+  (`closeSelf()`). Its Tab does nothing from inside an input. Neither
+  propagates: a propagated action does not reach the app's binding, it
+  reaches Herdr as an unknown command and shows an error toast. A click anywhere in the view gives it the keyboard, and
+  an overlay takes it when it opens. **Tab** switches the keyboard's side
+  between the tree and the diff; the side that has it gets a 1px `accent`
+  border, drawn over that side so nothing moves. A click on a row makes
+  the diff the keyboard's side, a click in the tree makes it the tree.
+  **Tree:** a cursor row with an `accent` ring, on the open file at first;
+  **↑/↓** move it over the shown rows, folders included, and open the file
+  it lands on; **←** closes an open folder, else goes to the parent
+  folder; **→** opens a closed folder, else goes to its first row. The
+  tree list does not scroll to its cursor: only a virtual list can be
+  scrolled from a script. **Diff:** a line cursor, drawn like the comment
+  box's highlight, starts on the first `+`/`-` row of a newly opened diff
+  and never stands on a meta row; a reload of the same diff keeps the
+  cursor and its range on their lines (by kind, number and text, as
+  comments are anchored). **↑/↓** move it one row, **PgUp/PgDn** 20,
+  stepping over meta rows; **Shift+↑/↓** move it and keep the other end,
+  making a range. A click on a row moves the cursor there. Each move calls
+  `scroll_to_item(item, "top")` on its row: a script cannot read or set a
+  scroll offset, so the cursor is the only way to scroll the diff from the
+  keyboard. **Enter** opens the comment box on the cursor (a hunk header:
+  its hunk, as a click does) or range; **Cmd+C** copies the range as Copy
+  does, and the hint at the bottom right reads "Copied" for a moment.
+  While the box is open, the cursor is not drawn, the arrows and Cmd+C do
+  nothing, and Enter gives the keyboard back to the box's textarea. **S**,
+  on either side, does what Submit review does (its tooltip reads "S")
+  while there are drafts. No j/k.
 - **Comment on a whole file**: the speech bubble on a file row opens the
   box with the target "whole file" (and opens that file's diff). It is the
   way to comment on a file whose diff has no lines to click (an image, a

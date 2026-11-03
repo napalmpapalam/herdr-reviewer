@@ -31,6 +31,15 @@ message.
 
   ![Comment box](screenshots/comment-box.png)
 
+- **Keyboard navigation.** **Tab** switches between the file tree and the
+  diff; the side that has the keyboard gets an accent border. In the tree,
+  **↑/↓** move to the previous or next row and open the file landed on,
+  **←/→** close or open a folder. In the diff, **↑/↓** move a line cursor
+  (the diff scrolls with it), **PgUp/PgDn** move 20 lines, **Shift+↑/↓**
+  extend it to a range, **Enter** opens the comment box on it and
+  **Cmd+C** copies its code. **S** submits the review. Esc closes the box
+  and gives the keys back to the view.
+
 - **Inline draft comments** sit under their lines across any number of
   files, each file shows a badge with its count, and the header reads
   "Submit review · N". Click a comment to edit or delete it. Drafts survive
@@ -56,7 +65,8 @@ message.
 
   ![The review in the agent's terminal](screenshots/review-in-agent.png)
 
-Everything the shipped panel did (file list, diff, commit box) stays.
+Everything the shipped panel did (file list, diff, commit box) stays; the
+dialog leaves out the commit box.
 
 ## Install
 
