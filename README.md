@@ -10,7 +10,7 @@ message.
 
 ## What it does
 
-- **Syntax-colored diffs** in One Dark Pro (or `dark-plus`, or your
+- **Syntax-colored diffs** in VS Code's Dark+ (or `one-dark-pro`, or your
   terminal theme's ansi colors), with line numbers, hunk headers and
   clearly tinted added and removed rows.
 - **Three review scopes**: *Uncommitted* (working tree vs `HEAD`),
@@ -98,7 +98,7 @@ default):
 | `reviewer.clear` | Discard the shown scope's drafts |
 | `reviewer.scope` | Cycle to the next review scope |
 
-Block props: `palette` (`one-dark-pro`, `dark-plus` or `theme`),
+Block props: `palette` (`dark-plus`, the default, `one-dark-pro` or `theme`),
 `font_size` (overrides the diff's size), `base` (the branch *vs main*
 compares against; default `origin/HEAD`, else `main`, else `master`).
 

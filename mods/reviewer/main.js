@@ -26,7 +26,7 @@
 // left its base (the pull-request view); "reviewer.scope" cycles it.
 // Long diff lines wrap to the panel's width (wrap()) instead of scrolling
 // sideways; a hunk header stays one truncated line.
-// Props: { palette: "one-dark-pro" | "theme" | "dark-plus" (default: one-dark-pro),
+// Props: { palette: "one-dark-pro" | "theme" | "dark-plus" (default: dark-plus),
 //          font_size: px (default: the terminal's font size minus one),
 //          base: the branch reviews are against (default: origin/HEAD, else main, else master) }.
 import { View, div, svg } from "gpui-kit";

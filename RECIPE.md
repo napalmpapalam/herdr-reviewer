@@ -1,7 +1,7 @@
 # reviewer
 
 The shipped Changes panel, made for code review: every diff row is syntax
-colored (One Dark Pro by default), and the diff is reviewed like a pull
+colored (VS Code's Dark+ by default), and the diff is reviewed like a pull
 request. Click a line to leave a comment on it, comments sit inline under
 their lines across any number of files, and "Submit review" sends them all,
 each with the lines it is about, to the agent running in the space as one
@@ -55,16 +55,16 @@ fill, `foreground` text at 13px. Top to bottom:
   - A right-aligned line-number column in `dim`, sized to the largest line
     number (new-file numbers for added and context lines, old-file numbers
     for removed lines), then a 16px sign column.
-  - Added rows tinted with the palette's `added` color (`#98c379` in One
-    Dark Pro) at 48/255 alpha, removed rows with `removed` (`#e06c75`) at 48;
+  - Added rows tinted with the palette's `added` color (`#3fb950` in
+    Dark+) at 48/255 alpha, removed rows with `removed` (`#f85149`) at 48;
     the gutter of those rows carries the same color at 38 alpha, the sign
     column shows a bold `+` or `−` in it, and the number reads at 80%
     `foreground`. No hover styling (see Watch out).
-  - Tokens in the One Dark Pro palette by default: keywords `#c678dd`,
-    strings `#98c379`, comments `#7f848e`, numbers and booleans `#d19a66`,
-    function calls `#61afef`, types `#e5c07b`, `this`/`self` `#e06c75`;
+  - Tokens in the Dark+ palette by default: keywords `#c586c0`, strings
+    `#ce9178`, comments `#6a9955`, numbers `#b5cea8`, booleans `#569cd6`,
+    function calls `#dcdcaa`, types `#4ec9b0`, `this`/`self` `#9cdcfe`;
     operators, punctuation, local names and properties stay `foreground`.
-    `props.palette` can pick `theme` (ansi colors) or `dark-plus`.
+    `props.palette` can pick `theme` (ansi colors) or `one-dark-pro`.
   - The lines the comment box is about carry a 2px `accent` left border,
     their tint rises to 92 alpha (context rows get `selected`), and their
     number turns `foreground`. Lines that already have a comment carry the
