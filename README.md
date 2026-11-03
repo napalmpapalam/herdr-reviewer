@@ -67,6 +67,9 @@ Everything the shipped panel did (file list, diff, commit box) stays.
 3. In your layout, replace the `changes` block's mod with `reviewer`
    (or add a new block for it). Herdr never overwrites it, since it is a
    clone of the shipped `changes` mod rather than the shipped mod itself.
+4. Or open it as a dialog over the window, 90% of its width and height:
+   bind a key to `mod.open:reviewer` in `keys.json` (for example
+   `"cmd-r": "mod.open:reviewer"`); the key closes it again, and so does Esc.
 
 Or ask the agent in your Herdr window to add
 `herdr.dev/mods/vytasgavelis/reviewer`; the steps are in Herdr's
