@@ -240,6 +240,7 @@ export default class Changes extends View {
           const stat = stats[path] ?? { add: 0, del: 0 };
           files.push({ path, status: s, fresh, ...stat });
         }
+        await this.countFresh(files, root, on);
         if (key() !== context) return;
         if (root !== this.root || scope !== this.scope || ref !== this.ref) { this.setLines([]); }
         const changedSet = root !== this.root || scope !== this.scope;
@@ -271,6 +272,19 @@ export default class Changes extends View {
       } catch (e) { if (key() === context) this.error = String(e); }
       finally { this.loading = false; cx.notify(); }
     });
+  }
+
+  // Untracked files have no numstat line, so grep counts their lines, as countLines() does
+  // (-I leaves binary files out). Without grep (Windows) a file is counted only when opened.
+  async countFresh(files, root, on) {
+    const fresh = new Map(files.filter((f) => f.fresh).map((f) => [f.path, f]));
+    if (!fresh.size) return;
+    // Exit 1 (only empty files) and 2 (a file deleted since the status) still print the counts.
+    const r = await exec("grep", ["-cHI", "", "--", ...fresh.keys()], { cwd: root, on }).catch(() => null);
+    for (const line of r?.stdout.split("\n") ?? []) {
+      const at = line.lastIndexOf(":"), f = fresh.get(line.slice(0, at));
+      if (f) f.add = Number(line.slice(at + 1)) || 0;
+    }
   }
 
   // A request's path relative to the shown repo, or null when it is not for

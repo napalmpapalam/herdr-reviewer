@@ -140,7 +140,11 @@ fill, `foreground` text at 13px. Top to bottom:
   "Uncommitted"; the choice is remembered per repo and machine in shared
   `reviewer.scope`. The file list is `git diff <ref> --name-status`
   plus untracked files and conflicts from `git status`, sorted by path;
-  counts come from `git diff <ref> --numstat`; a file's diff is `git diff
+  counts come from `git diff <ref> --numstat`, and an untracked file's
+  (which has no numstat line) from one `grep -cHI '' -- <paths>` per
+  refresh over all of them: it counts a last line without a newline, as
+  the opened diff does, and skips binary files; without grep (Windows) an
+  untracked file is counted only when opened; a file's diff is `git diff
   <ref> -- path`. These automatic reads run with the flags Herdr's own
   Changes panel uses (`--no-optional-locks -c core.fsmonitor=false -c
   diff.autoRefreshIndex=false`), so focusing a repo never takes
