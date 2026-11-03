@@ -10,6 +10,8 @@
 // review" sends every comment with its
 // lines to the space's agent as one message (ask.js); right-click a line to
 // ask about it at once instead. Esc closes the comment box.
+// The keyboard alone works too (navigate()): Tab switches between the tree
+// and the diff, arrows move a cursor, Enter comments, cmd-c copies, S submits.
 // The comment box is a card floating over the top-right of the diff (a
 // strip under it when the panel is narrow), so the rows never move: a
 // list row may hold no input, so the box can't sit between the lines.
@@ -104,6 +106,9 @@ function treeRows(files, collapsed, dark) {
   return rows;
 }
 
+// The accent border of the side that has the keyboard, drawn over it so nothing moves.
+const focusRing = (t) => div().absolute().inset_0().border_1().border_color(t.accent);
+
 const desc = (r) => ({ kind: r.kind, number: r.number ?? null, text: r.text });
 const descKey = (d) => `${d.kind}|${d.number}|${d.text}`;
 
@@ -132,6 +137,9 @@ export default class Changes extends View {
     if (props()?.dialog) { this.dialog = Object.create(Dialog.prototype); this.dialog.init(_props, cx); return; }
     this.files = []; this.rows = []; this.index = new Map(); this.items = []; this.sizes = []; this.gutter = 30; this.message = "";
     this.collapsed = new Set(); this.treeVersion = 0;
+    // The keyboard: the side it moves ("tree" or "diff"), the tree row under its cursor (a file or
+    // folder path), and the diff cursor with the other end of its range (row indexes).
+    this.pane = "diff"; this.treeAt = null; this.cursor = null; this.anchor = null;
     this.comments = []; this.composer = null; this.handle = cx.focus_handle(); this.scroll = VirtualListScrollHandle.new();
     this.fontSize = codeSize(); this.row = rowOf(this.fontSize);
     this.scope = "work"; this.scopeInfo = null; this.choosingScope = false; this.ref = "HEAD";
@@ -151,6 +159,15 @@ export default class Changes extends View {
     this.note.on("change", (_e, cx) => { this.noteText = this.note.value(); if (this.composer?.editing) this.rebuild(); cx.notify(); });
     this.noteText = "";
     this.refresh(cx);
+    // An overlay takes the keyboard at once; a panel takes it when clicked.
+    if (props()?.overlay) cx.timer.after(1, () => this.handle.focus());
+    // The app binds Tab (next input) and Esc (close the overlay), and a binding runs before
+    // on_key_down: bindings of our own, in a context deeper in, come first.
+    cx.bind_keys([
+      { keystroke: "tab", action: "reviewer_tab", context: "Reviewer" },
+      { keystroke: "shift-tab", action: "reviewer_tab", context: "Reviewer" },
+      { keystroke: "escape", action: "reviewer_escape", context: "Reviewer" },
+    ]);
     cx.timer.every(10000, (cx) => this.refresh(cx));
     cx.spawn(async (cx) => {
       for (;;) {
@@ -408,11 +425,22 @@ export default class Changes extends View {
   setLines(lines, path) {
     const same = this.lines && lines.length === this.lines.length && lines.every((l, i) => l === this.lines[i]);
     if (same) return;
+    const kept = this.selection() && { cursor: desc(this.rows[this.cursor]), anchor: desc(this.rows[this.anchor]) };
     this.lines = lines;
     this.rows = diffRows(lines, languageOf(path));
     this.index = new Map();
     this.rows.forEach((r, i) => { const k = descKey(desc(r)); if (!this.index.has(k)) this.index.set(k, i); });
+    this.placeCursor(kept);
     this.measure();
+  }
+
+  // A reload keeps the cursor and its range on the lines they were on. A new diff, or one that
+  // lost the cursor's line, starts on its first changed line, else the first line it can stand on.
+  placeCursor(kept) {
+    const cursor = this.at(kept?.cursor), anchor = this.at(kept?.anchor);
+    if (cursor >= 0) { this.cursor = cursor; this.anchor = anchor >= 0 ? anchor : cursor; return; }
+    const changed = this.rows.findIndex((r) => r.kind === "+" || r.kind === "-"), any = this.rows.findIndex((r) => r.kind !== "");
+    this.cursor = this.anchor = changed >= 0 ? changed : any >= 0 ? any : null;
   }
 
   // Sizes that depend on the font: the gutter (wide enough for the largest
@@ -666,6 +694,9 @@ export default class Changes extends View {
           .child(o.scope === this.scope ? svg("mods/reviewer/check.svg").size(12).text_color(t.accent) : div().w(12)))));
   }
 
+  // Whether `pane` ("tree" or "diff") has the keyboard.
+  keys(pane) { return this.pane === pane && this.handle.is_focused(); }
+
   // A panel under 600px has no room for a column beside the diff.
   narrow() { return (this.size?.width ?? 368) < 600; }
 
@@ -683,6 +714,7 @@ export default class Changes extends View {
   }
 
   toggleFolder(path, cx) {
+    this.pane = "tree"; this.treeAt = path;
     if (!this.collapsed.delete(path)) this.collapsed.add(path);
     this.treeVersion++; cx.notify();
   }
@@ -694,18 +726,111 @@ export default class Changes extends View {
     this.treeVersion++;
   }
 
+  // Tab: the keyboard's side swaps between the tree and the diff. In an input it does nothing: a
+  // propagated action reaches Herdr as an unknown command, not the app's Tab.
+  switchSide(cx) {
+    if (!this.handle.is_focused()) return;
+    this.pane = this.pane === "tree" ? "diff" : "tree";
+    cx.notify();
+  }
+
+  // Esc leaves the commit input, else closes the comment box, else closes an overlay.
+  escape(cx) {
+    if (this.typing) { this.typing = false; this.handle.focus(); cx.notify(); return; }
+    if (this.composer) { this.closeComposer(cx); return; }
+    this.closeSelf();
+  }
+
+  // Navigation keys, and S for Submit review, while the view itself holds the keyboard (not the
+  // commit input or the comment textarea). True when the key was used.
+  navigate(e, cx) {
+    if (!this.handle.is_focused()) return false;
+    if (e.keystroke === "s" && this.comments.length) { this.submit(cx); return true; }
+    return this.pane === "tree" ? this.treeKey(e.keystroke, cx) : this.diffKey(e.keystroke, cx);
+  }
+
+  // The tree cursor's row index: the row last moved to, else the open file's, else the first.
+  treeIndex(rows) {
+    const keyOf = (r) => r.dir ?? r.file.path;
+    const at = rows.findIndex((r) => keyOf(r) === this.treeAt);
+    return at >= 0 ? at : Math.max(0, rows.findIndex((r) => r.file?.path === this.open));
+  }
+
+  // A file the cursor lands on opens; a folder row is a stop too, so a closed one can be opened.
+  treeKey(keystroke, cx) {
+    const rows = this.treeRows(), i = this.treeIndex(rows), row = rows[i];
+    if (!row) return false;
+    const moveTo = (j) => {
+      const r = rows[j];
+      if (!r) return;
+      this.treeAt = r.dir ?? r.file.path;
+      if (r.file && this.open !== r.file.path) this.pick(r.file.path, cx);
+      cx.notify();
+    };
+    if (keystroke === "up") moveTo(i - 1);
+    else if (keystroke === "down") moveTo(i + 1);
+    else if (keystroke === "left" && row.dir && row.open) this.toggleFolder(row.dir, cx);
+    else if (keystroke === "left") moveTo(rows.map((_r, j) => j).filter((j) => j < i && rows[j].dir && rows[j].depth < row.depth).pop());
+    else if (keystroke === "right" && row.dir && !row.open) this.toggleFolder(row.dir, cx);
+    else if (keystroke === "right" && row.dir) moveTo(i + 1);
+    else return false;
+    return true;
+  }
+
+  // While the comment box is open the cursor is not drawn, so only Enter works: back to the box.
+  diffKey(keystroke, cx) {
+    if (this.composer) { if (keystroke !== "enter") return false; this.note.focus(); return true; }
+    const steps = { up: -1, down: 1, pageup: -20, pagedown: 20, "shift-up": -1, "shift-down": 1 };
+    if (keystroke in steps) { this.moveCursor(steps[keystroke], keystroke.startsWith("shift-"), cx); return true; }
+    const sel = this.selection();
+    if (!sel) return false;
+    if (keystroke === "enter") { this.commentSelection(sel, cx); return true; }
+    if (keystroke === "cmd-c") { this.copyLines(sel, cx); return true; }
+    return false;
+  }
+
+  // The cursor's range as sorted row indexes, or null when the diff has no line to stand on.
+  selection() {
+    if (this.cursor === null || !this.rows[this.cursor]) return null;
+    return { from: Math.min(this.cursor, this.anchor), to: Math.max(this.cursor, this.anchor) };
+  }
+
+  // Moves the cursor `delta` rows and scrolls its row on screen; `extend` keeps the range's other end.
+  moveCursor(delta, extend, cx) {
+    if (!this.selection()) return;
+    const dir = Math.sign(delta), last = this.rows.length - 1;
+    let i = Math.max(0, Math.min(last, this.cursor + delta));
+    // A meta row ("\ No newline at end of file") is stepped over; at the diff's end, back to the
+    // nearest line before it (the old cursor at worst, which is never a meta row).
+    while (this.rows[i].kind === "" && i + dir >= 0 && i + dir <= last) i += dir;
+    while (this.rows[i].kind === "" && i !== this.cursor) i -= dir;
+    this.cursor = i;
+    if (!extend) this.anchor = i;
+    const item = this.items.findIndex((it) => it.kind === "row" && it.i === i);
+    if (item >= 0) this.scroll.scroll_to_item(item, "top");
+    cx.notify();
+  }
+
+  // A single hunk header comments on its hunk, as a click does.
+  commentSelection(sel, cx) {
+    if (sel.from === sel.to) { this.clickRow(sel.from, cx); return; }
+    this.composer = { path: this.open, from: desc(this.rows[sel.from]), to: desc(this.rows[sel.to]), editing: null };
+    this.openBox(cx);
+  }
+
   // The changed files as a folder tree; the caller places and sizes the list. A click on a folder folds it.
   fileList(t, perFile) {
-    const indent = (depth) => 8 + depth * 14;
-    return v_flex().id("changes-list").overflow_y_scrollbar().p(6).border_color(t.border).children(this.treeRows().map((row) => {
+    const indent = (depth) => 8 + depth * 14, rows = this.treeRows();
+    const at = this.keys("tree") ? rows[this.treeIndex(rows)] : null, ring = (e, row) => e.border_1().border_color(row === at ? t.accent : NONE);
+    return v_flex().id("changes-list").overflow_y_scrollbar().p(6).children(rows.map((row) => {
       if (row.dir) {
-        return h_flex().id(`change-dir-${row.dir}`).h(28).flex_none().pl(indent(row.depth)).pr(8).gap(6).items_center().rounded(7).cursor_pointer().hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.toggleFolder(row.dir, cx))
+        return h_flex().id(`change-dir-${row.dir}`).h(28).flex_none().pl(indent(row.depth)).pr(8).gap(6).items_center().rounded(7).map((e) => ring(e, row)).cursor_pointer().hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.toggleFolder(row.dir, cx))
           .child(svg(`mods/reviewer/chevron-${row.open ? "down" : "right"}.svg`).size(11).flex_none().text_color(t.dim))
           .child(image(row.icon).size(16).flex_none())
           .child(div().min_w(0).truncate().text_color(t.muted).child(row.name));
       }
       const f = row.file, name = f.path.split("/").pop(), k = perFile[f.path];
-      return h_flex().id(`change-${f.path}`).h(28).flex_none().pl(indent(row.depth)).pr(8).gap(8).items_center().rounded(7).cursor_pointer().when(this.open === f.path, (e) => e.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.pick(f.path, cx))
+      return h_flex().id(`change-${f.path}`).h(28).flex_none().pl(indent(row.depth)).pr(8).gap(8).items_center().rounded(7).map((e) => ring(e, row)).cursor_pointer().when(this.open === f.path, (e) => e.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.pick(f.path, cx))
         .child(div().w(14).text_size(11).text_color(f.status === "A" ? t.ansi2 : f.status === "D" ? t.ansi1 : f.status === "U" ? t.ansi1 : t.blocked).child(f.status))
         .child(image(row.icon).size(16).flex_none())
         .child(div().id(`change-name-${f.path}`).flex_1().min_w(0).truncate().tooltip(f.path).child(name))
@@ -720,6 +845,11 @@ export default class Changes extends View {
         .when(f.add > 0, (e) => e.child(div().text_size(11).text_color(t.ansi2).child(`+${f.add}`))).when(f.del > 0, (e) => e.child(div().text_size(11).text_color(t.ansi1).child(`−${f.del}`)));
     })).when(!this.files.length, (e) => e.child(div().p(8).text_color(t.dim).child(this.error || (this.loading ? "Loading changes…" : this.root ? "No uncommitted changes" : "No folder"))));
   }
+  // The file list in a frame that draws the keyboard's border over it; the caller places and sizes it.
+  treePane(t, perFile) {
+    return v_flex().relative().border_color(t.border).child(this.fileList(t, perFile).flex_1().min_h(0)).when(this.keys("tree"), (e) => e.child(focusRing(t)));
+  }
+
   // The comment box: title, the lines it is about, the textarea, Add / Cancel / Delete.
   // `docked`: a strip under the diff (narrow panel) instead of a 300px card over its top-right.
   box(t, target, docked) {
@@ -791,7 +921,8 @@ export default class Changes extends View {
     if (this.outgoing && shared(SENT) === this.outgoing.id) { const { drafts } = this.outgoing; this.outgoing = null; cx.timer.after(1, (cx) => this.sent(drafts, cx)); }
     const t = theme(), colors = palette(props()?.palette, t), add = this.files.reduce((n, f) => n + f.add, 0), del = this.files.reduce((n, f) => n + f.del, 0);
     const enabled = Boolean(this.message.trim() && this.root && !this.busy && !this.loading);
-    const target = this.target(), n = this.comments.length, canAsk = Boolean(this.open && this.rows.length), side = this.side();
+    // Highlighted rows: the comment box's, else the keyboard's cursor or range.
+    const target = this.target(), marked = this.composer ? target : this.keys("diff") ? this.selection() : null, n = this.comments.length, canAsk = Boolean(this.open && this.rows.length), side = this.side();
     const commented = new Set();
     for (const it of this.items) if (it.kind === "comment") for (let j = it.from; j <= it.to; j++) commented.add(j);
     const perFile = {};
@@ -800,42 +931,45 @@ export default class Changes extends View {
     const link = (id, label, action) => div().id(id).h(24).px(8).flex().items_center().rounded(6).text_size(12).text_color(t.dim).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).on_click(action).child(label);
     return v_flex().id("changes").size_full().min_h(0).relative().rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13).track_focus(this.handle)
       .on_size_change((size, cx) => { const w = this.size?.width; this.size = size; if (w !== size.width) { this.rebuild(); cx.notify(); } })
+      .key_context("Reviewer").on_action("reviewer_tab", (_e, cx) => this.switchSide(cx)).on_action("reviewer_escape", (_e, cx) => this.escape(cx))
       .on_key_down((e, cx) => {
-        if (e.key === "escape" && this.typing) { this.typing = false; this.handle.focus(); cx.stop_propagation(); cx.notify(); }
-        else if (e.key === "escape" && this.composer) { this.closeComposer(cx); cx.stop_propagation(); }
-        else if (e.key === "enter" && (e.modifiers?.platform || e.modifiers?.control) && this.composer) { this.addComment(cx); cx.stop_propagation(); }
+        if (e.key === "enter" && (e.modifiers?.platform || e.modifiers?.control) && this.composer) { this.addComment(cx); cx.stop_propagation(); }
+        else if (this.navigate(e, cx)) cx.stop_propagation();
       })
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
         .child(div().font_semibold().child("Changes"))
         .child(div().h(24).px(8).flex().items_center().rounded(6).border_1().border_color(t.border).text_size(12).text_color(t.muted).child(`${this.files.length} files`))
         .when(Boolean(this.root) && this.hasHead, (e) => e.child(this.scopePicker(t)))
         .child(div().flex_1()).child(div().text_size(11).text_color(t.ansi2).child(`+${add}`)).child(div().text_size(11).text_color(t.ansi1).child(`−${del}`))
-        .when(n > 0, (e) => e.child(link("review-discard", "Discard", (_e, cx) => this.setComments([], cx))).child(button("review-submit", `Submit review · ${n}`, true, (_e, cx) => this.submit(cx))))
+        .when(n > 0, (e) => e.child(link("review-discard", "Discard", (_e, cx) => this.setComments([], cx))).child(button("review-submit", `Submit review · ${n}`, true, (_e, cx) => this.submit(cx)).tooltip("S")))
         .when(n === 0 && canAsk, (e) => e.child(button("ask", "Ask about diff", false, (_e, cx) => this.askAbout(null, cx)))))
-      .when(!side, (e) => e.child(this.fileList(t, perFile).flex_none().h(Math.min(200, Math.max(44, this.treeRows().length * 28 + 12))).border_b(1)))
+      .when(!side, (e) => e.child(this.treePane(t, perFile).flex_none().h(Math.min(200, Math.max(44, this.treeRows().length * 28 + 12))).border_b(1)))
       .when(this.limited, el => el.child(div().px(12).py(4).text_size(11).text_color(t.dim).child("Showing the first 1,000 changed files")))
       .child(h_flex().flex_1().min_h(0).items_stretch()
         .child(div().flex_1().min_w(0).min_h(0).relative().font_family(codeFont()).text_size(this.fontSize)
         .child(div().id("changes-diff-x").size_full()
           .child(div().w_full().h_full().child(v_virtual_list("changes-diff", this.items.length, this.sizes.length ? this.sizes : this.row, (i) => this.items[i].key,
-            (range) => this.items.slice(range.start, range.end).map((it) => this.item(it, t, colors, target, commented))).size_full().track_scroll(this.scroll)
-            .on_item_click((k, cx) => { if (k.startsWith("c:")) { if (k.slice(2) !== this.composer?.editing) this.editComment(k.slice(2), cx); } else this.clickRow(Number(k.slice(2)), cx); })
+            (range) => this.items.slice(range.start, range.end).map((it) => this.item(it, t, colors, marked, commented))).size_full().track_scroll(this.scroll)
+            .on_item_click((k, cx) => { if (k.startsWith("c:")) { if (k.slice(2) !== this.composer?.editing) this.editComment(k.slice(2), cx); } else { const i = Number(k.slice(2)); this.pane = "diff"; if (this.rows[i]?.kind) this.cursor = this.anchor = i; this.clickRow(i, cx); } })
             .on_item_secondary_click((k, _e, cx) => { if (!k.startsWith("r:")) return; const i = Number(k.slice(2)); const r = this.rows[i]; if (!r || r.kind === "") return; this.askAbout(r.kind === "@" ? this.rows.map((_r, j) => j).filter((j) => this.rows[j].hunk === i && this.rows[j].kind !== "") : [i], cx); }))))
         .child(Scrollbar.vertical("changes-diff").viewport_from_layout().absolute().inset_0())
+        .when(this.keys("diff"), (e) => e.child(focusRing(t)))
         .when(!this.open && this.files.length > 0, (e) => e.child(div().absolute().top(6).px(12).text_color(t.dim).child("Select a file to view its changes")))
-        .when(canAsk && !this.composer && n === 0, (e) => e.child(div().absolute().bottom(6).right(14).px(8).py(3).rounded(6).bg(t.raised + "e0").text_size(10).text_color(t.dim).child("Click a line to comment · right-click to ask")))
+        .when(canAsk && !this.composer && (n === 0 || this.copied), (e) => e.child(div().absolute().bottom(6).right(14).px(8).py(3).rounded(6).bg(t.raised + "e0").text_size(10).text_color(this.copied ? t.accent : t.dim).child(this.copied ? "Copied" : "Click a line to comment · right-click to ask")))
         // The comment box, a card floating over the top-right of the diff while it is open (a strip below it on a narrow panel).
         .when(Boolean(this.composer) && !this.narrow(), (e) => e.child(this.box(t, target, false))))
-        .when(side, (e) => e.child(this.fileList(t, perFile).flex_none().w(LIST_WIDTH).min_h(0).border_l(1))))
+        .when(side, (e) => e.child(this.treePane(t, perFile).flex_none().w(LIST_WIDTH).min_h(0).border_l(1))))
       // Narrow panel: the comment box is a strip under the diff instead of a column beside it.
       .when(Boolean(this.composer) && this.narrow(), (e) => e.child(this.box(t, target, true)))
       .when(Boolean(this.note_), (e) => e.child(div().px(10).pb(8).text_size(11).text_color(t.ansi1).child(this.note_)))
-      .child(h_flex().flex_none().p(10).gap(8).border_t(1).border_color(t.border)
+      // An overlay is for reviewing: it has no commit bar.
+      .when(!props()?.overlay, (e) => e.child(h_flex().flex_none().p(10).gap(8).border_t(1).border_color(t.border)
         .child(div().id("commit-message").flex_1().min_w(0).h(32).px(10).flex().items_center().rounded(8).border_1().border_color(this.typing ? t.accent : t.border).cursor_text().on_mouse_down("left", (_e, cx) => cx.stop_propagation()).child(Input.new(this.input).h_full().text_size(12).text_color(t.foreground)))
-        .child(div().id("commit").h(32).px(14).flex().items_center().rounded(8).bg(enabled ? t.solid : t.raised).text_color(enabled ? t.solid_foreground : t.dim).text_size(12).when(enabled, (e) => e.cursor_pointer()).on_click((_e, cx) => this.commit(cx)).child(this.busy ? "Committing…" : "Commit")));
+        .child(div().id("commit").h(32).px(14).flex().items_center().rounded(8).bg(enabled ? t.solid : t.raised).text_color(enabled ? t.solid_foreground : t.dim).text_size(12).when(enabled, (e) => e.cursor_pointer()).on_click((_e, cx) => this.commit(cx)).child(this.busy ? "Committing…" : "Commit"))));
   }
 
   pick(path, cx) {
+    this.pane = "tree"; this.treeAt = path;
     this.open = this.open === path ? null : path; this.setLines([]); this.note_ = null;
     this.closed = !this.open;
     if (this.open) this.remember(LAST, this.open);
