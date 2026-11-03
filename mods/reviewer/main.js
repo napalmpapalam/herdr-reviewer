@@ -26,6 +26,8 @@
 // left its base (the pull-request view); "reviewer.scope" cycles it.
 // Long diff lines wrap to the panel's width (wrap()) instead of scrolling
 // sideways; a hunk header stays one truncated line.
+// A view at least SIDE_LIST wide, such as the dialog, shows the file list as a
+// LIST_WIDTH column right of the diff (side()).
 // Props: { palette: "one-dark-pro" | "theme" | "dark-plus" (default: dark-plus),
 //          font_size: px (default: the terminal's font size minus one),
 //          base: the branch reviews are against (default: origin/HEAD, else main, else master) }.
@@ -61,6 +63,8 @@ const codeFont = () => (typeof settings().font === "string" && settings().font) 
 const codeSize = () => Number(props()?.font_size) || Math.max(9, (Number(settings().font_size) || 14) - 1);
 const rowOf = (size) => Math.round(size * 1.8);
 const charOf = (size) => size * 0.62;
+// The file list's width when it is a column beside the diff, and the view width that gets one.
+const LIST_WIDTH = 300, SIDE_LIST = 1000;
 
 // A row's identity across reloads: its kind, number and text.
 const desc = (r) => ({ kind: r.kind, number: r.number ?? null, text: r.text });
@@ -334,7 +338,7 @@ export default class Changes extends View {
 
   // Characters per diff line: the panel's width less the gutter, the sign
   // column, the borders and room for the scrollbar.
-  cols() { return Math.max(20, Math.floor(((this.size?.width ?? 368) - this.gutter - 32) / charOf(this.fontSize))); }
+  cols() { return Math.max(20, Math.floor((this.diffWidth() - this.gutter - 32) / charOf(this.fontSize))); }
 
   // A row's spans cut into lines that fit the panel. A line breaks after its
   // last space, or mid-word when it has none in its second half, as an
@@ -387,7 +391,7 @@ export default class Changes extends View {
   }
 
   commentHeight(text) {
-    const cpl = Math.max(24, Math.floor(((this.size?.width ?? 368) - 90) / charOf(this.fontSize)));
+    const cpl = Math.max(24, Math.floor((this.diffWidth() - 90) / charOf(this.fontSize)));
     const lines = text.split("\n").reduce((n, l) => n + Math.max(1, Math.ceil(l.length / cpl)), 0);
     return 44 + lines * Math.round(this.fontSize * 1.45);
   }
@@ -572,6 +576,30 @@ export default class Changes extends View {
   // A panel under 600px has no room for a column beside the diff.
   narrow() { return (this.size?.width ?? 368) < 600; }
 
+  // A view this wide (the dialog) shows the file list as a column right of the diff, not above it.
+  side() { return (this.size?.width ?? 368) >= SIDE_LIST; }
+
+  // The diff's width: the view's, less the file list column beside it.
+  diffWidth() { return (this.size?.width ?? 368) - (this.side() ? LIST_WIDTH : 0); }
+
+  // The changed files, one row each; the caller places and sizes the list.
+  fileList(t, perFile) {
+    return v_flex().id("changes-list").overflow_y_scrollbar().p(6).border_color(t.border).children(this.files.map((f) => {
+      const parts = f.path.split("/"), name = parts.pop(), k = perFile[f.path];
+      return h_flex().id(`change-${f.path}`).h(28).flex_none().px(8).gap(8).items_center().rounded(7).cursor_pointer().when(this.open === f.path, (e) => e.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.pick(f.path, cx))
+        .child(div().w(14).text_size(11).text_color(f.status === "A" ? t.ansi2 : f.status === "D" ? t.ansi1 : f.status === "U" ? t.ansi1 : t.blocked).child(f.status))
+        .child(h_flex().flex_1().min_w(0).child(div().text_color(t.dim).truncate().child(parts.length ? parts.join("/") + "/" : "")).child(div().max_w(260).min_w(0).truncate().child(name)))
+        // One speech bubble: the draft count when there are drafts, and a click comments on the whole file.
+        .child(h_flex().id(`comment-file-${f.path}`).h(18).min_w(18).px(k ? 5 : 0).gap(3).items_center().justify_center().rounded(4).cursor_pointer()
+          .when(Boolean(k), (e) => e.bg(t.accent + "33").text_size(10).text_color(t.foreground))
+          .when(!k, (e) => e.text_color(t.muted))
+          .hover((s) => s.bg(k ? t.accent + "55" : t.hover).text_color(t.foreground))
+          .tooltip(k ? `${k} draft comment${k > 1 ? "s" : ""} · click to comment on the whole file` : "Comment on the whole file")
+          .on_click((_e, cx) => { cx.stop_propagation(); this.commentFile(f.path, cx); })
+          .when(Boolean(k), (e) => e.child(String(k))).child(svg("mods/reviewer/comment.svg").size(k ? 10 : 12)))
+        .when(f.add > 0, (e) => e.child(div().text_size(11).text_color(t.ansi2).child(`+${f.add}`))).when(f.del > 0, (e) => e.child(div().text_size(11).text_color(t.ansi1).child(`−${f.del}`)));
+    })).when(!this.files.length, (e) => e.child(div().p(8).text_color(t.dim).child(this.error || (this.loading ? "Loading changes…" : this.root ? "No uncommitted changes" : "No folder"))));
+  }
   // The comment box: title, the lines it is about, the textarea, Add / Cancel / Delete.
   // `docked`: a strip under the diff (narrow panel) instead of a 300px card over its top-right.
   box(t, target, docked) {
@@ -604,7 +632,7 @@ export default class Changes extends View {
   }
 
   item(it, t, colors, target, commented) {
-    const width = (this.size?.width ?? 368) - 60;
+    const width = this.diffWidth() - 60;
     if (it.kind === "comment") {
       const span = it.whole ? "whole file" : it.from === it.to ? `line ${this.rows[it.from].number}` : `lines ${this.rows[it.from].number}–${this.rows[it.to].number}`;
       return div().w_full().h(it.height).flex_none().pl(42).pr(12).py(4).cursor_pointer()
@@ -644,7 +672,7 @@ export default class Changes extends View {
     if (this.submitting && typeof sentAt === "number" && sentAt >= this.submitting) { this.submitting = null; cx.timer.after(1, (cx) => this.setComments([], cx)); }
     const t = theme(), colors = palette(props()?.palette, t), add = this.files.reduce((n, f) => n + f.add, 0), del = this.files.reduce((n, f) => n + f.del, 0);
     const enabled = Boolean(this.message.trim() && this.root && !this.busy && !this.loading);
-    const target = this.target(), n = this.comments.length, canAsk = Boolean(this.open && this.rows.length);
+    const target = this.target(), n = this.comments.length, canAsk = Boolean(this.open && this.rows.length), side = this.side();
     const commented = new Set();
     for (const it of this.items) if (it.kind === "comment") for (let j = it.from; j <= it.to; j++) commented.add(j);
     const perFile = {};
@@ -665,21 +693,7 @@ export default class Changes extends View {
         .child(div().flex_1()).child(div().text_size(11).text_color(t.ansi2).child(`+${add}`)).child(div().text_size(11).text_color(t.ansi1).child(`−${del}`))
         .when(n > 0, (e) => e.child(link("review-discard", "Discard", (_e, cx) => this.setComments([], cx))).child(button("review-submit", `Submit review · ${n}`, true, (_e, cx) => this.submit(cx))))
         .when(n === 0 && canAsk, (e) => e.child(button("ask", "Ask about diff", false, (_e, cx) => this.askAbout(null, cx)))))
-      .child(v_flex().id("changes-list").flex_none().h(Math.min(200, Math.max(44, this.files.length * 28 + 12))).overflow_y_scrollbar().p(6).border_b(1).border_color(t.border).children(this.files.map((f) => {
-        const parts = f.path.split("/"), name = parts.pop(), k = perFile[f.path];
-        return h_flex().id(`change-${f.path}`).h(28).flex_none().px(8).gap(8).items_center().rounded(7).cursor_pointer().when(this.open === f.path, (e) => e.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.pick(f.path, cx))
-          .child(div().w(14).text_size(11).text_color(f.status === "A" ? t.ansi2 : f.status === "D" ? t.ansi1 : f.status === "U" ? t.ansi1 : t.blocked).child(f.status))
-          .child(h_flex().flex_1().min_w(0).child(div().text_color(t.dim).truncate().child(parts.length ? parts.join("/") + "/" : "")).child(div().max_w(260).min_w(0).truncate().child(name)))
-          // One speech bubble: the draft count when there are drafts, and a click comments on the whole file.
-          .child(h_flex().id(`comment-file-${f.path}`).h(18).min_w(18).px(k ? 5 : 0).gap(3).items_center().justify_center().rounded(4).cursor_pointer()
-            .when(Boolean(k), (e) => e.bg(t.accent + "33").text_size(10).text_color(t.foreground))
-            .when(!k, (e) => e.text_color(t.muted))
-            .hover((s) => s.bg(k ? t.accent + "55" : t.hover).text_color(t.foreground))
-            .tooltip(k ? `${k} draft comment${k > 1 ? "s" : ""} · click to comment on the whole file` : "Comment on the whole file")
-            .on_click((_e, cx) => { cx.stop_propagation(); this.commentFile(f.path, cx); })
-            .when(Boolean(k), (e) => e.child(String(k))).child(svg("mods/reviewer/comment.svg").size(k ? 10 : 12)))
-          .when(f.add > 0, (e) => e.child(div().text_size(11).text_color(t.ansi2).child(`+${f.add}`))).when(f.del > 0, (e) => e.child(div().text_size(11).text_color(t.ansi1).child(`−${f.del}`)));
-      })).when(!this.files.length, (e) => e.child(div().p(8).text_color(t.dim).child(this.error || (this.loading ? "Loading changes…" : this.root ? "No uncommitted changes" : "No folder")))))
+      .when(!side, (e) => e.child(this.fileList(t, perFile).flex_none().h(Math.min(200, Math.max(44, this.files.length * 28 + 12))).border_b(1)))
       .when(this.limited, el => el.child(div().px(12).py(4).text_size(11).text_color(t.dim).child("Showing the first 1,000 changed files")))
       .child(h_flex().flex_1().min_h(0).items_stretch()
         .child(div().flex_1().min_w(0).min_h(0).relative().font_family(codeFont()).text_size(this.fontSize)
@@ -690,9 +704,10 @@ export default class Changes extends View {
             .on_item_secondary_click((k, _e, cx) => { if (!k.startsWith("r:")) return; const i = Number(k.slice(2)); const r = this.rows[i]; if (!r || r.kind === "") return; this.askAbout(r.kind === "@" ? this.rows.map((_r, j) => j).filter((j) => this.rows[j].hunk === i && this.rows[j].kind !== "") : [i], cx); }))))
         .child(Scrollbar.vertical("changes-diff").viewport_from_layout().absolute().inset_0())
         .when(!this.open && this.files.length > 0, (e) => e.child(div().absolute().top(6).px(12).text_color(t.dim).child("Select a file to view its changes")))
-        .when(canAsk && !this.composer && n === 0, (e) => e.child(div().absolute().bottom(6).right(14).px(8).py(3).rounded(6).bg(t.raised + "e0").text_size(10).text_color(t.dim).child("Click a line to comment · right-click to ask"))))
+        .when(canAsk && !this.composer && n === 0, (e) => e.child(div().absolute().bottom(6).right(14).px(8).py(3).rounded(6).bg(t.raised + "e0").text_size(10).text_color(t.dim).child("Click a line to comment · right-click to ask")))
         // The comment box, a card floating over the top-right of the diff while it is open (a strip below it on a narrow panel).
         .when(Boolean(this.composer) && !this.narrow(), (e) => e.child(this.box(t, target, false))))
+        .when(side, (e) => e.child(this.fileList(t, perFile).flex_none().w(LIST_WIDTH).min_h(0).border_l(1))))
       // Narrow panel: the comment box is a strip under the diff instead of a column beside it.
       .when(Boolean(this.composer) && this.narrow(), (e) => e.child(this.box(t, target, true)))
       .when(Boolean(this.note_), (e) => e.child(div().px(10).pb(8).text_size(11).text_color(t.ansi1).child(this.note_)))

@@ -35,8 +35,11 @@ fill, `foreground` text at 13px. Top to bottom:
   · N** button (24px tall, 10px side padding, 6px corners, 12px medium,
   `solid` background with `solid_foreground` text). With none and a diff
   open: an "Ask about diff" button on the `raised` background.
-- **File list**, 28px rows, 6px padding, at most 200px tall then it
-  scrolls: a status letter (A `ansi2`, D and U `ansi1`, M `blocked`), the
+- **File list**, 28px rows, 6px padding. In a view under 1000px wide it
+  sits under the header, at most 200px tall then it scrolls; at 1000px and
+  wider (the dialog) it is a 300px column right of the diff, its full
+  height, with a 1px `border` line on its left, and long diff lines wrap
+  to the diff's width. Each row: a status letter (A `ansi2`, D and U `ansi1`, M `blocked`), the
   folder in `dim` then the name, one speech-bubble button (`comment.svg`)
   per file, `+n` and `−n` on the right. With no drafts the bubble is an
   18px `muted` 12px icon (`hover` background on hover); with drafts it
