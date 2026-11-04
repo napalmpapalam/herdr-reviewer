@@ -12,7 +12,8 @@ message.
 
 - **Syntax-colored diffs** in VS Code's Dark+ (or `one-dark-pro`, or your
   terminal theme's ansi colors), with line numbers, hunk headers and
-  clearly tinted added and removed rows.
+  clearly tinted added and removed rows. Dark+ colors names, brackets and
+  control keywords the way Zed does.
 - **Material file and folder icons** in the file tree, from
   [Material Icon Theme](https://github.com/material-extensions/vscode-material-icon-theme)
   5.40.0, picked by the same rules as in VS Code.
@@ -98,7 +99,7 @@ mod opened as an overlay of itself.
 
 The mod's version is the `version` field in `mods/reviewer/mod.json`, and
 each release is tagged `v<version>` in this repo. Installed copies carry no
-git history, so quote that field when reporting a problem. Version 0.7.0 was
+git history, so quote that field when reporting a problem. Version 0.8.0 was
 last tested on Herdr 0.1.12 (`herdr-app` 0.1.12, `herdr` 0.9.3).
 
 ## Commands and props
