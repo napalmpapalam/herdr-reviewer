@@ -112,6 +112,7 @@ default):
 | `reviewer.ask` | Ask the agent about the whole open diff |
 | `reviewer.clear` | Discard the shown scope's drafts |
 | `reviewer.scope` | Cycle to the next review scope |
+| `reviewer.wrap` | Turn word wrap off (the diff scrolls sideways) or on again |
 
 Block props: `palette` (`dark-plus`, the default, `one-dark-pro` or `theme`),
 `font_size` (overrides the diff's size), `base` (the branch *vs main*

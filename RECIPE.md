@@ -61,7 +61,12 @@ fill, `foreground` text at 13px. Top to bottom:
   when unset; `props.font_size` overrides), rows 1.8× the size (23px at
   13px), scrolling down. A long line wraps to the panel's width, after its
   last space (mid-word when it has none in its second half), and keeps its
-  number and sign on its first line; a hunk header stays one truncated line:
+  number and sign on its first line; a hunk header stays one truncated line.
+  The width is `on_size_change`'s, divided by `settings().zoom`: it reports
+  screen pixels, and layout pixels are scaled by the zoom. With wrap off
+  (`reviewer.wrap`, kept in shared `reviewer.wrap`, so every copy follows),
+  each row is one line and the diff scrolls sideways, as wide as its
+  longest line:
   - Hunk headers (`@@ -1,13 +1,16 @@`) on the `raised` background in `dim`.
   - A right-aligned line-number column in `dim`, sized to the largest line
     number (new-file numbers for added and context lines, old-file numbers
@@ -280,7 +285,8 @@ fill, `foreground` text at 13px. Top to bottom:
   it short at this size. Consider sending fewer comments at a time."
 - Key commands: `reviewer.submit`, `reviewer.ask`,
   `reviewer.clear` (discard drafts), `reviewer.scope` (next
-  scope). They reach shown copies only.
+  scope), `reviewer.wrap` (word wrap off or on). They reach shown copies only;
+  the wrap state is shared, so a hidden copy follows it when it shows again.
 - Another mod opens a file's diff by setting shared `reviewer.open` to
   `{ id, at: Date.now(), path, on }` (an absolute path on machine `on`,
   null for local). `render` starts a refresh when the request is for the

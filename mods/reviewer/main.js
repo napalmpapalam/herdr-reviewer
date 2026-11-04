@@ -26,8 +26,9 @@
 // The header's scope picker chooses what is reviewed: the uncommitted
 // changes, the last commit plus them, or everything on the branch since it
 // left its base (the pull-request view); "reviewer.scope" cycles it.
-// Long diff lines wrap to the panel's width (wrap()) instead of scrolling
-// sideways; a hunk header stays one truncated line.
+// Long diff lines wrap to the panel's width (wrap()); "reviewer.wrap" turns
+// that off for every reviewer (shared "reviewer.wrap"), and the diff then
+// scrolls sideways. A hunk header stays one truncated line.
 // Once a review or a question is sent, a reviewer opened as an overlay
 // closes itself. It opens again on the file picked last in that repo
 // ("reviewer.last").
@@ -60,7 +61,7 @@ const repoKey = (on, root) => `${on ?? ""}:${root}`;
 const recall = (name, repo) => (shared(name) ?? {})[repo];
 // The review scopes, in picker order. `ref` is what the working tree is diffed against.
 const SCOPES = ["work", "last", "branch"];
-const OPEN = "reviewer.open", OPEN_TTL = 30_000;
+const OPEN = "reviewer.open", OPEN_TTL = 30_000, WRAP = "reviewer.wrap";
 // Flags for the automatic git reads (the same ones Herdr's Changes panel
 // uses): never take index.lock, which an agent's commit may need at the same
 // moment; never start a repo's fsmonitor just because it got focus; never
@@ -135,7 +136,7 @@ export default class Changes extends View {
   init(_props, cx) {
     // Opened as the send dialog (ask.js): this copy is the dialog, nothing else.
     if (props()?.dialog) { this.dialog = Object.create(Dialog.prototype); this.dialog.init(_props, cx); return; }
-    this.files = []; this.rows = []; this.index = new Map(); this.items = []; this.sizes = []; this.gutter = 30; this.message = "";
+    this.files = []; this.rows = []; this.index = new Map(); this.items = []; this.sizes = []; this.gutter = 30; this.lineWidth = 0; this.message = "";
     this.collapsed = new Set(); this.treeVersion = 0;
     // The tree scrolls by hand (fileList): its offset, its shown height, and a key asking to show the cursor row.
     this.treeScroll = 0; this.treeHeight = null; this.treeReveal = false;
@@ -143,7 +144,7 @@ export default class Changes extends View {
     // folder path), and the diff cursor with the other end of its range (row indexes).
     this.pane = "diff"; this.treeAt = null; this.cursor = null; this.anchor = null;
     this.comments = []; this.composer = null; this.handle = cx.focus_handle(); this.scroll = VirtualListScrollHandle.new();
-    this.fontSize = codeSize(); this.row = rowOf(this.fontSize);
+    this.fontSize = codeSize(); this.row = rowOf(this.fontSize); this.zoom = settings().zoom; this.wrapped = shared(WRAP) ?? true;
     this.scope = "work"; this.scopeInfo = null; this.choosingScope = false; this.ref = "HEAD";
     this.input = InputState.new({ placeholder: "Commit message" });
     this.input.on("change", (_e, cx) => {
@@ -178,6 +179,7 @@ export default class Changes extends View {
         else if (c === "submit") this.submit(cx);
         else if (c === "clear") this.setComments([], cx);
         else if (c === "scope") this.cycleScope(cx);
+        else if (c === "wrap") setShared(WRAP, !(shared(WRAP) ?? true));
         cx.notify();
       }
     });
@@ -487,9 +489,9 @@ export default class Changes extends View {
   // comments on the whole file come first. The comment being edited stays
   // in place as a live preview of what is typed in the box.
   rebuild() {
-    // A hunk header stays one truncated line; other rows wrap to the panel's width.
+    // A hunk header stays one truncated line; other rows wrap to the panel's width, or stay one line.
     const items = this.rows.map((r, i) => {
-      const lines = r.kind === "@" ? null : this.wrap(r.spans);
+      const lines = r.kind === "@" ? null : this.wrapped ? this.wrap(r.spans) : [r.spans];
       return { key: `r:${i}`, kind: "row", i, lines, height: this.row * (lines?.length ?? 1) };
     });
     const under = new Map(), editing = this.composer?.editing ?? null;
@@ -505,6 +507,9 @@ export default class Changes extends View {
     }
     for (const item of items) { this.items.push(item); for (const c of under.get(item.i) ?? []) this.items.push(c); }
     this.sizes = this.items.map((it) => it.height);
+    // Unwrapped, the rows are as wide as the longest line, and the diff scrolls sideways.
+    const longest = Math.max(0, ...this.rows.map((r) => r.spans.reduce((n, s) => n + s.text.length, 0)));
+    this.lineWidth = Math.ceil(longest * charOf(this.fontSize)) + this.gutter + 36;
   }
 
   commentHeight(text) {
@@ -699,14 +704,17 @@ export default class Changes extends View {
   // Whether `pane` ("tree" or "diff") has the keyboard.
   keys(pane) { return this.pane === pane && this.handle.is_focused(); }
 
+  // The view's width in layout pixels: on_size_change reports screen pixels, which the app's zoom scales.
+  width() { return this.size ? this.size.width / settings().zoom : 368; }
+
   // A panel under 600px has no room for a column beside the diff.
-  narrow() { return (this.size?.width ?? 368) < 600; }
+  narrow() { return this.width() < 600; }
 
   // A view this wide (the dialog) shows the file list as a column right of the diff, not above it.
-  side() { return (this.size?.width ?? 368) >= SIDE_LIST; }
+  side() { return this.width() >= SIDE_LIST; }
 
   // The diff's width: the view's, less the file list column beside it.
-  diffWidth() { return (this.size?.width ?? 368) - (this.side() ? LIST_WIDTH : 0); }
+  diffWidth() { return this.width() - (this.side() ? LIST_WIDTH : 0); }
 
   // The tree's rows, made again only when the files, a folder's state or the appearance change.
   treeRows() {
@@ -939,8 +947,8 @@ export default class Changes extends View {
     const request = shared(OPEN);
     if (request != null && this.stale(request)) cx.timer.after(1, () => setShared(OPEN, null));
     else if (key() !== this.context || (request?.id !== this.tried && this.requestedFile(request) !== null)) this.refresh(cx);
-    const size = codeSize();
-    if (size !== this.fontSize) { this.fontSize = size; this.row = rowOf(size); this.measure(); }
+    const size = codeSize(), zoom = settings().zoom, wrapped = shared(WRAP) ?? true;
+    if (size !== this.fontSize || zoom !== this.zoom || wrapped !== this.wrapped) { this.fontSize = size; this.zoom = zoom; this.wrapped = wrapped; this.row = rowOf(size); this.measure(); }
     if (this.outgoing && shared(SENT) === this.outgoing.id) { const { drafts } = this.outgoing; this.outgoing = null; cx.timer.after(1, (cx) => this.sent(drafts, cx)); }
     const t = theme(), colors = palette(props()?.palette, t), add = this.files.reduce((n, f) => n + f.add, 0), del = this.files.reduce((n, f) => n + f.del, 0);
     const enabled = Boolean(this.message.trim() && this.root && !this.busy && !this.loading);
@@ -970,8 +978,8 @@ export default class Changes extends View {
       .when(this.limited, el => el.child(div().px(12).py(4).text_size(11).text_color(t.dim).child("Showing the first 1,000 changed files")))
       .child(h_flex().flex_1().min_h(0).items_stretch()
         .child(div().flex_1().min_w(0).min_h(0).relative().font_family(codeFont()).text_size(this.fontSize)
-        .child(div().id("changes-diff-x").size_full()
-          .child(div().w_full().h_full().child(v_virtual_list("changes-diff", this.items.length, this.sizes.length ? this.sizes : this.row, (i) => this.items[i].key,
+        .child(div().id("changes-diff-x").size_full().when(!this.wrapped, (e) => e.overflow_x_scrollbar())
+          .child(div().w_full().when(!this.wrapped, (e) => e.min_w(this.lineWidth)).h_full().child(v_virtual_list("changes-diff", this.items.length, this.sizes.length ? this.sizes : this.row, (i) => this.items[i].key,
             (range) => this.items.slice(range.start, range.end).map((it) => this.item(it, t, colors, marked, commented))).size_full().track_scroll(this.scroll)
             .on_item_click((k, cx) => { if (k.startsWith("c:")) { if (k.slice(2) !== this.composer?.editing) this.editComment(k.slice(2), cx); } else { const i = Number(k.slice(2)); this.pane = "diff"; if (this.rows[i]?.kind) this.cursor = this.anchor = i; this.clickRow(i, cx); } })
             .on_item_secondary_click((k, _e, cx) => { if (!k.startsWith("r:")) return; const i = Number(k.slice(2)); const r = this.rows[i]; if (!r || r.kind === "") return; this.askAbout(r.kind === "@" ? this.rows.map((_r, j) => j).filter((j) => this.rows[j].hunk === i && this.rows[j].kind !== "") : [i], cx); }))))
