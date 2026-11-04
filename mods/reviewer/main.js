@@ -42,6 +42,7 @@ import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, Scrollbar, v_virtual_list, VirtualListScrollHandle, Popover } from "gpui-base";
 import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, nextCommand, props, shared, setShared, closeOverlay } from "herdr";
 import { tokenize, languageOf } from "./highlight.js";
+import { refine } from "./refine.js";
 import { ask } from "./ask.js";
 import { palette } from "./palette.js";
 import { Dialog } from "./dialog.js";
@@ -127,7 +128,7 @@ function diffRows(lines, lang) {
     else row = { kind: "", text: line };
     row.hunk = hunk;
     const t = tokenize(row.text.replace(/\t/g, "    "), lang, state);
-    row.spans = t.spans; state = t.state;
+    row.spans = refine(t.spans, lang); state = t.state;
     return row;
   });
 }
@@ -938,8 +939,8 @@ export default class Changes extends View {
       .child(div().w(this.gutter).h_full().flex_none().when(Boolean(tint), (e) => e.bg(tint + "26"))
         .child(h_flex().h(this.row).justify_end().pr(4).text_color(on ? t.foreground : tint ? t.foreground + "cc" : t.dim).child(number === undefined ? "" : String(number))))
       .child(h_flex().w(16).h(this.row).flex_none().justify_center().font_bold().text_color(tint ?? NONE).child(kind === "+" ? "+" : kind === "-" ? "−" : " "))
-      .child(v_flex().flex_1().min_w(0).children(it.lines.map((line) => h_flex().h(this.row).whitespace_nowrap()
-        .children(line.map((s) => s.cls ? div().text_color(colors[s.cls] ?? t.foreground).child(s.text) : div().child(s.text))))));
+      .child(v_flex().flex_1().min_w(0).children(it.lines.map((line) => h_flex().h(this.row).whitespace_nowrap().text_color(colors.text ?? t.foreground)
+        .children(line.map((s) => colors[s.cls] ? div().text_color(colors[s.cls]).child(s.text) : div().child(s.text))))));
   }
 
   render(cx) {

@@ -76,11 +76,15 @@ fill, `foreground` text at 13px. Top to bottom:
     the gutter of those rows carries the same color at 38 alpha, the sign
     column shows a bold `+` or `−` in it, and the number reads at 80%
     `foreground`. No hover styling (see Watch out).
-  - Tokens in the Dark+ palette by default: keywords `#c586c0`, strings
-    `#ce9178`, comments `#6a9955`, numbers `#b5cea8`, booleans `#569cd6`,
-    function calls `#dcdcaa`, types `#4ec9b0`, `this`/`self` `#9cdcfe`;
-    operators, punctuation, local names and properties stay `foreground`.
-    `props.palette` can pick `theme` (ansi colors) or `one-dark-pro`.
+  - Tokens in the Dark+ palette by default, as Zed draws them: row text
+    `#d4d4d4`, keywords that declare or import `#569cd6`, keywords that
+    branch, loop or jump `#c586c0`, strings `#ce9178`, comments `#6a9955`,
+    numbers `#b5cea8`, booleans and `this`/`self` `#569cd6`, ALL_CAPS
+    constants `#4fc1ff`, function calls `#dcdcaa`, types `#4ec9b0`, names
+    (variables, properties) `#9cdcfe`, brackets `#ffd700`; operators and
+    punctuation keep the row text color. `props.palette` can pick `theme`
+    (ansi colors) or `one-dark-pro`; those have no name or bracket colors,
+    so names and brackets keep the row text color there.
   - The lines the comment box is about carry a 2px `accent` left border,
     their tint rises to 92 alpha (context rows get `selected`), and their
     number turns `foreground`. Lines that already have a comment carry the
@@ -320,8 +324,19 @@ fill, `foreground` text at 13px. Top to bottom:
   handful of elements. Only the first 600 characters of a line are
   tokenized. `state` carries an open block comment or triple string to the
   next row.
+- `refine.js`: `refine(spans, lang)` gives a tokenized line finer classes,
+  after Zed's highlight queries. `control` is a keyword that branches,
+  loops or jumps (Zed's lists for js, rust, go, c and sh, a guess for
+  java, ruby, php and swift; none in python, sql, css, html, yaml, json);
+  a `default` not followed by `:` and Rust's `for` in an `impl` header stay
+  `keyword`. Python's `and`/`or`/`not`/`in`/`is` turn plain. `self` is
+  `this`/`self`/`super`/`cls`, `constant` an ALL_CAPS word other than
+  NULL/TRUE/FALSE. Plain text splits into `name` (any word, except in sh,
+  where a word is an argument) and `bracket` (`()[]{}`), at most 40 parts
+  a row.
 - `palette.js`: `ONE_DARK_PRO`, `DARK_PLUS`, and `palette(name, theme)`
-  (`theme` maps to ansi colors).
+  (`theme` maps to ansi colors). `text` is the row's color; a class with
+  no color in the palette draws in it.
 - `diffRows(lines, lang)` numbers and tokenizes every row once when a diff
   loads (`setLines`), which also builds `index` (row descriptor → index)
   for anchoring. `rebuild()` makes the list's `items`: one per row plus one
@@ -376,7 +391,8 @@ fill, `foreground` text at 13px. Top to bottom:
   per-row hover style forces a frame on every mouse move. The first build
   colored operators and punctuation too and gave rows a hover tint; moving
   the mouse over the diff lagged. Hence: no hover on rows, few span classes,
-  the 24-span cap. Keep it that way.
+  the 24-span cap. Names and brackets came back later (`refine.js`) with
+  no hover and a cap of 40 parts a row; keep both.
 - A handler registered inside the row renderer throws at run time, and a
   row may hold no retained state (no textarea). Rows have no buttons; every
   click comes through the list's `on_item_click` with the row's key, and
